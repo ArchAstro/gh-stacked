@@ -129,3 +129,79 @@ func (c *Client) UpdatePullRequestBase(number int, base string) error {
 
 	return c.rest.Patch(path, bytes.NewReader(jsonBody), nil)
 }
+
+type PullRequestStatus struct {
+	Number           int
+	Title            string
+	URL              string
+	Branch           string
+	BaseBranch       string
+	State            string
+	Mergeable        bool
+	ChecksPassing    bool
+	Approvals        int
+	ChangesRequested bool
+	Additions        int
+	Deletions        int
+}
+
+func (c *Client) GetPullRequest(number int) (*PullRequestStatus, error) {
+	path := fmt.Sprintf("repos/%s/%s/pulls/%d", c.repo.Owner, c.repo.Name, number)
+
+	var pr PullRequest
+	err := c.rest.Get(path, &pr)
+	if err != nil {
+		return nil, err
+	}
+
+	return &PullRequestStatus{
+		Number:     pr.Number,
+		Title:      pr.Title,
+		URL:        pr.URL,
+		Branch:     pr.Head.Ref,
+		BaseBranch: pr.Base.Ref,
+		State:      pr.State,
+		Mergeable:  pr.Mergeable,
+		Additions:  pr.Additions,
+		Deletions:  pr.Deletions,
+	}, nil
+}
+
+func (c *Client) ListPullRequests(head string) ([]PullRequest, error) {
+	path := fmt.Sprintf("repos/%s/%s/pulls?head=%s:%s&state=open",
+		c.repo.Owner, c.repo.Name, c.repo.Owner, head)
+
+	var prs []PullRequest
+	err := c.rest.Get(path, &prs)
+	return prs, err
+}
+
+func (c *Client) MergePullRequest(number int) error {
+	path := fmt.Sprintf("repos/%s/%s/pulls/%d/merge", c.repo.Owner, c.repo.Name, number)
+
+	body := map[string]string{
+		"merge_method": "squash",
+	}
+
+	jsonBody, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+
+	return c.rest.Put(path, bytes.NewReader(jsonBody), nil)
+}
+
+func (c *Client) ClosePullRequest(number int) error {
+	path := fmt.Sprintf("repos/%s/%s/pulls/%d", c.repo.Owner, c.repo.Name, number)
+
+	update := map[string]string{
+		"state": "closed",
+	}
+
+	jsonBody, err := json.Marshal(update)
+	if err != nil {
+		return err
+	}
+
+	return c.rest.Patch(path, bytes.NewReader(jsonBody), nil)
+}

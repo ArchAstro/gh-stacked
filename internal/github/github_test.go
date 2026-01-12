@@ -28,3 +28,20 @@ func TestCreatePullRequestInput(t *testing.T) {
 		t.Errorf("unexpected title: %s", input.Title)
 	}
 }
+
+func TestPullRequestStatus(t *testing.T) {
+	// Test status struct
+	status := PullRequestStatus{
+		Number:           42,
+		Title:            "Add feature",
+		URL:              "https://github.com/org/repo/pull/42",
+		Mergeable:        true,
+		ChecksPassing:    true,
+		Approvals:        2,
+		ChangesRequested: false,
+	}
+
+	if !status.Mergeable {
+		t.Error("expected mergeable")
+	}
+}
