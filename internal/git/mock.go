@@ -22,6 +22,7 @@ type MockGit struct {
 	// Behavior hooks
 	OnPushBranch   func(remote, branch string, force bool) error
 	OnCreateBranch func(name, hash string) error
+	OnRun          func(args []string) (string, error) // Custom Run handler for testing
 }
 
 type MockCall struct {
@@ -124,7 +125,13 @@ func (m *MockGit) ResetHard(ref string) error {
 
 func (m *MockGit) Run(args ...string) (string, error) {
 	m.Calls = append(m.Calls, MockCall{Method: "Run", Args: []interface{}{args}})
-	return "", m.Errors["Run"]
+	if m.OnRun != nil {
+		return m.OnRun(args)
+	}
+	if err := m.Errors["Run"]; err != nil {
+		return "", err
+	}
+	return "", nil
 }
 
 func (m *MockGit) ListRemoteBranches(pattern string) ([]string, error) {

@@ -80,6 +80,19 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("run status from your feature branch, not a stack branch")
 	}
 
+	// Check sync status with remote - fetch and detect merged commits
+	var syncWarning string
+	syncChecker := git.NewSyncChecker(g)
+	syncStatus, err := syncChecker.EnsureSynced(false) // Don't auto-rebase, just check
+	if err != nil {
+		// Non-fatal for status - just show warning
+		if !jsonOutput {
+			fmt.Printf("Warning: could not check sync status: %v\n\n", err)
+		}
+	} else if syncStatus.NeedsRebase {
+		syncWarning = syncStatus.FormatSyncMessage()
+	}
+
 	// Get base branch
 	baseBranch, err := g.GetBaseBranch()
 	if err != nil {
@@ -215,8 +228,12 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		fmt.Println()
 	}
 
-	if output.LocalInSync {
+	if output.LocalInSync && syncWarning == "" {
 		fmt.Println("Local: in sync ✓")
+	} else if syncWarning != "" {
+		fmt.Println("Local: needs sync ⚠")
+		fmt.Println()
+		fmt.Print(syncWarning)
 	} else {
 		fmt.Println("Local: out of sync")
 	}

@@ -167,6 +167,24 @@ func runPush(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("run push from your feature branch, not a stack branch")
 	}
 
+	// Check sync status with remote - fetch and detect merged commits
+	if !pushPreview {
+		syncChecker := git.NewSyncChecker(g)
+		if !jsonOutput {
+			fmt.Println("Checking sync status...")
+		}
+		syncStatus, err := syncChecker.EnsureSynced(false) // Don't auto-rebase, just check
+		if err != nil {
+			// Non-fatal - continue if fetch fails
+			if !jsonOutput {
+				fmt.Printf("Warning: could not check sync status: %v\n", err)
+			}
+		} else if syncStatus.NeedsRebase {
+			return fmt.Errorf("branch is out of sync with %s\n\n%s\nAfter syncing, run 'gh stacked push' again",
+				syncStatus.BaseBranch, syncStatus.FormatSyncMessage())
+		}
+	}
+
 	// Get base branch
 	baseBranch, err := g.GetBaseBranch()
 	if err != nil {
