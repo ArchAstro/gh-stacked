@@ -112,7 +112,14 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to create GitHub client: %w", err)
 	}
 
-	// Build status output
+	// Fetch existing remote branches for this stack - SOURCE OF TRUTH for positions
+	remoteBranches, err := g.ListRemoteBranches("origin/stack/" + currentBranch + "/*")
+	if err != nil {
+		remoteBranches = nil
+	}
+	existingBranches := stack.ParseExistingBranches(remoteBranches, currentBranch)
+
+	// Build status output by matching commits to existing branches
 	output := StatusOutput{
 		StackID:     currentBranch,
 		BaseBranch:  baseBranch,
@@ -120,9 +127,29 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		PRs:         make([]StatusPROutput, 0, len(commits)),
 	}
 
-	for i, commit := range commits {
-		position := i + 1
-		branchName := stack.StackBranchName(currentBranch, position, commit.Subject)
+	// Track claimed branches to prevent double-matching
+	claimedBranches := make(map[int]bool)
+	nextPosition := stack.FindMaxPosition(existingBranches) + 1
+	if nextPosition == 1 {
+		nextPosition = 1
+	}
+
+	for _, commit := range commits {
+		var position int
+		var branchName string
+
+		// Match commit to existing branch by slug
+		existing := stack.MatchCommitToExistingBranchExcluding(commit.Subject, existingBranches, claimedBranches)
+		if existing != nil {
+			claimedBranches[existing.Position] = true
+			position = existing.Position
+			branchName = existing.Branch
+		} else {
+			// New commit - assign next available position
+			position = nextPosition
+			branchName = stack.StackBranchName(currentBranch, position, commit.Subject)
+			nextPosition++
+		}
 
 		prOutput := StatusPROutput{
 			Position: position,

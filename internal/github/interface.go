@@ -9,6 +9,7 @@ type GitHubOperations interface {
 	UpdatePullRequestBase(number int, base string) error
 	GetPullRequest(number int) (*PullRequestStatus, error)
 	ListPullRequests(head string) ([]PullRequest, error)
+	ListAllPullRequests(head string) ([]PullRequest, error)
 	MergePullRequest(number int) error
 	ClosePullRequest(number int) error
 }

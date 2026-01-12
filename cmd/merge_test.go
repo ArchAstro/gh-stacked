@@ -12,8 +12,8 @@ import (
 func TestMergeCommand(t *testing.T) {
 	cmd := mergeCmd
 
-	if cmd.Use != "merge <pr-number>" {
-		t.Errorf("expected Use 'merge <pr-number>', got %s", cmd.Use)
+	if cmd.Use != "merge <position>" {
+		t.Errorf("expected Use 'merge <position>', got %s", cmd.Use)
 	}
 
 	// Verify the command takes exactly 1 argument
@@ -30,6 +30,11 @@ func TestRunMerge_Success(t *testing.T) {
 	mockGit.Commits = []git.Commit{
 		{Hash: "abc1234", Subject: "Add user model"},
 		{Hash: "def5678", Subject: "Add user API"},
+	}
+	// Remote branches are source of truth for positions
+	mockGit.RemoteBranches = []string{
+		"stack/feature/auth/01-add-user-model",
+		"stack/feature/auth/02-add-user-api",
 	}
 
 	mockGH := github.NewMockGitHub()
@@ -109,6 +114,11 @@ func TestRunMerge_MustMergeInOrder(t *testing.T) {
 		{Hash: "abc1234", Subject: "Add user model"},
 		{Hash: "def5678", Subject: "Add user API"},
 	}
+	// Remote branches are source of truth for positions
+	mockGit.RemoteBranches = []string{
+		"stack/feature/auth/01-add-user-model",
+		"stack/feature/auth/02-add-user-api",
+	}
 
 	oldNewGit := mergeNewGit
 	defer func() { mergeNewGit = oldNewGit }()
@@ -119,9 +129,9 @@ func TestRunMerge_MustMergeInOrder(t *testing.T) {
 		t.Fatal("expected error for out-of-order merge")
 	}
 
-	// Error message should mention that PR #1 must be merged first
-	if !containsSubstring(err.Error(), "PR #1 must be merged first") {
-		t.Errorf("expected error mentioning PR #1 must be merged first, got %q", err.Error())
+	// Error message should mention that position 1 must be merged first
+	if !containsSubstring(err.Error(), "position 1 must be merged first") {
+		t.Errorf("expected error mentioning position 1 must be merged first, got %q", err.Error())
 	}
 }
 
@@ -133,6 +143,10 @@ func TestRunMerge_NoRebaseFlag(t *testing.T) {
 	mockGit.Commits = []git.Commit{
 		{Hash: "abc1234", Subject: "Add user model"},
 		{Hash: "def5678", Subject: "Add user API"},
+	}
+	mockGit.RemoteBranches = []string{
+		"stack/feature/auth/01-add-user-model",
+		"stack/feature/auth/02-add-user-api",
 	}
 
 	mockGH := github.NewMockGitHub()
@@ -185,6 +199,9 @@ func TestRunMerge_NoRemainingPRs(t *testing.T) {
 	mockGit.BaseBranch = "main"
 	mockGit.Commits = []git.Commit{
 		{Hash: "abc1234", Subject: "Add user model"},
+	}
+	mockGit.RemoteBranches = []string{
+		"stack/feature/auth/01-add-user-model",
 	}
 
 	mockGH := github.NewMockGitHub()
@@ -248,18 +265,22 @@ func TestRunMerge_InvalidPRNumber(t *testing.T) {
 	mockGit.Commits = []git.Commit{
 		{Hash: "abc1234", Subject: "Add user model"},
 	}
+	mockGit.RemoteBranches = []string{
+		"stack/feature/auth/01-add-user-model",
+	}
 
 	oldNewGit := mergeNewGit
 	defer func() { mergeNewGit = oldNewGit }()
 	mergeNewGit = func() git.GitOperations { return mockGit }
 
-	err := runMerge(nil, []string{"5"}) // Only 1 commit exists
+	err := runMerge(nil, []string{"5"}) // Only position 1 exists
 	if err == nil {
 		t.Fatal("expected error for invalid PR number")
 	}
 
-	if !containsSubstring(err.Error(), "PR 5 not found") {
-		t.Errorf("expected error containing 'PR 5 not found', got %q", err.Error())
+	// Should fail because position 5 doesn't exist and 1 must be merged first
+	if !containsSubstring(err.Error(), "position 1 must be merged first") {
+		t.Errorf("expected error about merging position 1 first, got %q", err.Error())
 	}
 }
 
@@ -290,6 +311,9 @@ func TestRunMerge_PRNumberZero(t *testing.T) {
 	mockGit.Commits = []git.Commit{
 		{Hash: "abc1234", Subject: "Add user model"},
 	}
+	mockGit.RemoteBranches = []string{
+		"stack/feature/auth/01-add-user-model",
+	}
 
 	oldNewGit := mergeNewGit
 	defer func() { mergeNewGit = oldNewGit }()
@@ -300,8 +324,9 @@ func TestRunMerge_PRNumberZero(t *testing.T) {
 		t.Fatal("expected error for PR number 0")
 	}
 
-	if !containsSubstring(err.Error(), "PR 0 not found") {
-		t.Errorf("expected error about PR 0 not found, got %q", err.Error())
+	// Position 0 doesn't exist, must merge position 1 first
+	if !containsSubstring(err.Error(), "position 1 must be merged first") {
+		t.Errorf("expected error about merging position 1 first, got %q", err.Error())
 	}
 }
 
@@ -312,6 +337,9 @@ func TestRunMerge_NoPRFound(t *testing.T) {
 	mockGit.BaseBranch = "main"
 	mockGit.Commits = []git.Commit{
 		{Hash: "abc1234", Subject: "Add user model"},
+	}
+	mockGit.RemoteBranches = []string{
+		"stack/feature/auth/01-add-user-model",
 	}
 
 	mockGH := github.NewMockGitHub()
@@ -331,8 +359,8 @@ func TestRunMerge_NoPRFound(t *testing.T) {
 		t.Fatal("expected error when no PR found for branch")
 	}
 
-	if !containsSubstring(err.Error(), "no PR found") {
-		t.Errorf("expected error about no PR found, got %q", err.Error())
+	if !containsSubstring(err.Error(), "no open PR found") {
+		t.Errorf("expected error about no open PR found, got %q", err.Error())
 	}
 }
 
@@ -343,6 +371,9 @@ func TestRunMerge_MergeFails(t *testing.T) {
 	mockGit.BaseBranch = "main"
 	mockGit.Commits = []git.Commit{
 		{Hash: "abc1234", Subject: "Add user model"},
+	}
+	mockGit.RemoteBranches = []string{
+		"stack/feature/auth/01-add-user-model",
 	}
 
 	mockGH := github.NewMockGitHub()
@@ -376,6 +407,10 @@ func TestRunMerge_RetargetFails(t *testing.T) {
 	mockGit.Commits = []git.Commit{
 		{Hash: "abc1234", Subject: "Add user model"},
 		{Hash: "def5678", Subject: "Add user API"},
+	}
+	mockGit.RemoteBranches = []string{
+		"stack/feature/auth/01-add-user-model",
+		"stack/feature/auth/02-add-user-api",
 	}
 
 	mockGH := github.NewMockGitHub()
@@ -413,6 +448,10 @@ func TestRunMerge_RebaseConflict(t *testing.T) {
 	mockGit.Commits = []git.Commit{
 		{Hash: "abc1234", Subject: "Add user model"},
 		{Hash: "def5678", Subject: "Add user API"},
+	}
+	mockGit.RemoteBranches = []string{
+		"stack/feature/auth/01-add-user-model",
+		"stack/feature/auth/02-add-user-api",
 	}
 	// Simulate rebase conflict on the second Run call (first is fetch, second is rebase)
 	callCount := 0
@@ -480,6 +519,10 @@ func TestRunMerge_FetchFails(t *testing.T) {
 		{Hash: "abc1234", Subject: "Add user model"},
 		{Hash: "def5678", Subject: "Add user API"},
 	}
+	mockGit.RemoteBranches = []string{
+		"stack/feature/auth/01-add-user-model",
+		"stack/feature/auth/02-add-user-api",
+	}
 	mockGit.Errors["Run"] = errors.New("fetch failed")
 
 	mockGH := github.NewMockGitHub()
@@ -517,6 +560,11 @@ func TestRunMerge_ThreePRStack(t *testing.T) {
 		{Hash: "abc1234", Subject: "Add user model"},
 		{Hash: "def5678", Subject: "Add user API"},
 		{Hash: "ghi9012", Subject: "Add user tests"},
+	}
+	mockGit.RemoteBranches = []string{
+		"stack/feature/auth/01-add-user-model",
+		"stack/feature/auth/02-add-user-api",
+		"stack/feature/auth/03-add-user-tests",
 	}
 
 	mockGH := github.NewMockGitHub()
@@ -572,6 +620,9 @@ func TestRunMerge_GitHubClientCreationFails(t *testing.T) {
 	mockGit.Commits = []git.Commit{
 		{Hash: "abc1234", Subject: "Add user model"},
 	}
+	mockGit.RemoteBranches = []string{
+		"stack/feature/auth/01-add-user-model",
+	}
 
 	oldNewGit := mergeNewGit
 	oldNewGitHub := mergeNewGitHub
@@ -601,6 +652,9 @@ func TestRunMerge_ListPullRequestsFails(t *testing.T) {
 	mockGit.BaseBranch = "main"
 	mockGit.Commits = []git.Commit{
 		{Hash: "abc1234", Subject: "Add user model"},
+	}
+	mockGit.RemoteBranches = []string{
+		"stack/feature/auth/01-add-user-model",
 	}
 
 	mockGH := github.NewMockGitHub()
@@ -641,7 +695,239 @@ func TestRunMerge_NoCommits(t *testing.T) {
 		t.Fatal("expected error when there are no commits")
 	}
 
-	if !containsSubstring(err.Error(), "PR 1 not found") {
-		t.Errorf("expected error about PR not found, got %q", err.Error())
+	if !containsSubstring(err.Error(), "no commits in stack") {
+		t.Errorf("expected error about no commits in stack, got %q", err.Error())
+	}
+}
+
+// TestRunMerge_Position2AfterMerge tests merging position 2 when it's the first in the stack
+// (after PR 1 was already merged via GitHub)
+func TestRunMerge_Position2AfterMerge(t *testing.T) {
+	mockGit := git.NewMockGit()
+	mockGit.CurrentBranch = "feature/auth"
+	mockGit.BaseBranch = "main"
+	// Only 2 commits remain after PR 1 was merged
+	mockGit.Commits = []git.Commit{
+		{Hash: "def5678", Subject: "Add user API"},
+		{Hash: "ghi9012", Subject: "Add user tests"},
+	}
+	// Position 1 branch no longer exists - positions start at 2
+	mockGit.RemoteBranches = []string{
+		"stack/feature/auth/02-add-user-api",
+		"stack/feature/auth/03-add-user-tests",
+	}
+
+	mockGH := github.NewMockGitHub()
+	mockGH.AddExistingPR("stack/feature/auth/02-add-user-api", 101, "Add user API")
+	mockGH.AddExistingPR("stack/feature/auth/03-add-user-tests", 102, "Add user tests")
+
+	oldNewGit := mergeNewGit
+	oldNewGitHub := mergeNewGitHub
+	oldNoRebase := mergeNoRebase
+	defer func() {
+		mergeNewGit = oldNewGit
+		mergeNewGitHub = oldNewGitHub
+		mergeNoRebase = oldNoRebase
+	}()
+	mergeNewGit = func() git.GitOperations { return mockGit }
+	mergeNewGitHub = func() (github.GitHubOperations, error) { return mockGH, nil }
+	mergeNoRebase = false
+
+	// Should be able to merge position 2 since it's now the first in the stack
+	err := runMerge(nil, []string{"2"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify PR #101 was merged (position 2)
+	if len(mockGH.MergedPRs) != 1 || mockGH.MergedPRs[0] != 101 {
+		t.Errorf("expected PR #101 merged, got %v", mockGH.MergedPRs)
+	}
+
+	// Verify PR #102 (position 3, now first in remaining stack) was retargeted to main
+	foundRetarget := false
+	for _, call := range mockGH.Calls {
+		if call.Method == "UpdatePullRequestBase" {
+			if len(call.Args) >= 2 {
+				number, _ := call.Args[0].(int)
+				base, _ := call.Args[1].(string)
+				if number == 102 && base == "main" {
+					foundRetarget = true
+				}
+			}
+		}
+	}
+	if !foundRetarget {
+		t.Error("expected PR #102 to be retargeted to main")
+	}
+}
+
+// TestRunMerge_Position3NotFirstErrors tests that merging position 3 when position 2 is first fails
+func TestRunMerge_Position3NotFirstErrors(t *testing.T) {
+	mockGit := git.NewMockGit()
+	mockGit.CurrentBranch = "feature/auth"
+	mockGit.BaseBranch = "main"
+	mockGit.Commits = []git.Commit{
+		{Hash: "def5678", Subject: "Add user API"},
+		{Hash: "ghi9012", Subject: "Add user tests"},
+	}
+	// Position 2 is first in stack
+	mockGit.RemoteBranches = []string{
+		"stack/feature/auth/02-add-user-api",
+		"stack/feature/auth/03-add-user-tests",
+	}
+
+	oldNewGit := mergeNewGit
+	defer func() { mergeNewGit = oldNewGit }()
+	mergeNewGit = func() git.GitOperations { return mockGit }
+
+	// Try to merge position 3 when position 2 is first
+	err := runMerge(nil, []string{"3"})
+	if err == nil {
+		t.Fatal("expected error for out-of-order merge")
+	}
+
+	// Error should mention position 2 must be merged first
+	if !containsSubstring(err.Error(), "position 2 must be merged first") {
+		t.Errorf("expected error mentioning position 2 must be merged first, got %q", err.Error())
+	}
+}
+
+// TestRunMerge_IgnoresOrphanedBranches tests that merge ignores remote branches
+// that don't match any local commit (orphaned from previous merges/rebases)
+func TestRunMerge_IgnoresOrphanedBranches(t *testing.T) {
+	mockGit := git.NewMockGit()
+	mockGit.CurrentBranch = "feature/auth"
+	mockGit.BaseBranch = "main"
+	// Only 2 local commits exist
+	mockGit.Commits = []git.Commit{
+		{Hash: "abc1234", Subject: "Add user API"},
+		{Hash: "def5678", Subject: "Add user tests"},
+	}
+	// But remote has an orphaned branch at position 2 (no matching local commit)
+	// Local commits match positions 3 and 4
+	mockGit.RemoteBranches = []string{
+		"stack/feature/auth/02-orphaned-commit-was-rebased-away", // Orphaned - no matching local commit
+		"stack/feature/auth/03-add-user-api",                     // Matches first local commit
+		"stack/feature/auth/04-add-user-tests",                   // Matches second local commit
+	}
+
+	mockGH := github.NewMockGitHub()
+	// PR exists for the orphaned branch (but we should ignore it)
+	mockGH.AddExistingPR("stack/feature/auth/02-orphaned-commit-was-rebased-away", 99, "Orphaned")
+	// PRs for the actual commits
+	mockGH.AddExistingPR("stack/feature/auth/03-add-user-api", 100, "Add user API")
+	mockGH.AddExistingPR("stack/feature/auth/04-add-user-tests", 101, "Add user tests")
+
+	oldNewGit := mergeNewGit
+	oldNewGitHub := mergeNewGitHub
+	oldNoRebase := mergeNoRebase
+	defer func() {
+		mergeNewGit = oldNewGit
+		mergeNewGitHub = oldNewGitHub
+		mergeNoRebase = oldNoRebase
+	}()
+	mergeNewGit = func() git.GitOperations { return mockGit }
+	mergeNewGitHub = func() (github.GitHubOperations, error) { return mockGH, nil }
+	mergeNoRebase = true // Skip rebase for simplicity
+
+	// Should be able to merge position 3 (ignoring orphaned position 2)
+	err := runMerge(nil, []string{"3"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify PR #100 was merged (position 3, first matching local commit)
+	if len(mockGH.MergedPRs) != 1 || mockGH.MergedPRs[0] != 100 {
+		t.Errorf("expected PR #100 merged, got %v", mockGH.MergedPRs)
+	}
+}
+
+// TestRunMerge_OrphanedBranchDoesNotBlockMerge tests that trying to merge
+// position 3 works even when orphaned position 2 exists
+func TestRunMerge_OrphanedBranchDoesNotBlockMerge(t *testing.T) {
+	mockGit := git.NewMockGit()
+	mockGit.CurrentBranch = "feature/auth"
+	mockGit.BaseBranch = "main"
+	// Single local commit
+	mockGit.Commits = []git.Commit{
+		{Hash: "abc1234", Subject: "Add user model"},
+	}
+	// Remote has orphaned branch at position 1 and 2, local commit matches position 3
+	mockGit.RemoteBranches = []string{
+		"stack/feature/auth/01-old-commit-merged",    // Orphaned
+		"stack/feature/auth/02-another-old-commit",   // Orphaned
+		"stack/feature/auth/03-add-user-model",       // Matches local commit
+	}
+
+	mockGH := github.NewMockGitHub()
+	mockGH.AddExistingPR("stack/feature/auth/03-add-user-model", 100, "Add user model")
+
+	oldNewGit := mergeNewGit
+	oldNewGitHub := mergeNewGitHub
+	oldNoRebase := mergeNoRebase
+	defer func() {
+		mergeNewGit = oldNewGit
+		mergeNewGitHub = oldNewGitHub
+		mergeNoRebase = oldNoRebase
+	}()
+	mergeNewGit = func() git.GitOperations { return mockGit }
+	mergeNewGitHub = func() (github.GitHubOperations, error) { return mockGH, nil }
+	mergeNoRebase = true
+
+	// Should be able to merge position 3 directly (orphaned 1 and 2 are ignored)
+	err := runMerge(nil, []string{"3"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify PR #100 was merged
+	if len(mockGH.MergedPRs) != 1 || mockGH.MergedPRs[0] != 100 {
+		t.Errorf("expected PR #100 merged, got %v", mockGH.MergedPRs)
+	}
+}
+
+// TestRunMerge_AlreadyMergedPR tests that trying to merge an already-merged PR gives a helpful error
+func TestRunMerge_AlreadyMergedPR(t *testing.T) {
+	mockGit := git.NewMockGit()
+	mockGit.CurrentBranch = "feature/auth"
+	mockGit.BaseBranch = "main"
+	mockGit.Commits = []git.Commit{
+		{Hash: "abc1234", Subject: "Add user model"},
+	}
+	mockGit.RemoteBranches = []string{
+		"stack/feature/auth/01-add-user-model",
+	}
+
+	mockGH := github.NewMockGitHub()
+	// Add PR as already closed/merged (not open)
+	mockGH.AddExistingPRWithState("stack/feature/auth/01-add-user-model", 77, "Add user model", "closed")
+
+	oldNewGit := mergeNewGit
+	oldNewGitHub := mergeNewGitHub
+	oldNoRebase := mergeNoRebase
+	defer func() {
+		mergeNewGit = oldNewGit
+		mergeNewGitHub = oldNewGitHub
+		mergeNoRebase = oldNoRebase
+	}()
+	mergeNewGit = func() git.GitOperations { return mockGit }
+	mergeNewGitHub = func() (github.GitHubOperations, error) { return mockGH, nil }
+	mergeNoRebase = true
+
+	err := runMerge(nil, []string{"1"})
+	if err == nil {
+		t.Fatal("expected error when PR is already merged")
+	}
+
+	// Error should mention the PR number and that it's already merged
+	if !containsSubstring(err.Error(), "#77") {
+		t.Errorf("expected error to mention PR #77, got %q", err.Error())
+	}
+	if !containsSubstring(err.Error(), "already closed/merged") {
+		t.Errorf("expected error to say 'already closed/merged', got %q", err.Error())
+	}
+	if !containsSubstring(err.Error(), "rebase") {
+		t.Errorf("expected error to mention rebase as fix, got %q", err.Error())
 	}
 }

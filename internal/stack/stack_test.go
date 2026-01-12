@@ -228,3 +228,181 @@ func TestStripStackFooter(t *testing.T) {
 		t.Error("stripped body should keep description")
 	}
 }
+
+func TestMatchCommitsToPositions_NoExistingBranches(t *testing.T) {
+	commits := []struct{ Hash, Subject, Body string }{
+		{"abc1234", "Add user model", ""},
+		{"def5678", "Add user API", ""},
+		{"ghi9012", "Add user tests", ""},
+	}
+	existingBranches := []ExistingBranchInfo{}
+
+	result := MatchCommitsToPositions(commits, existingBranches, "feature/auth")
+
+	if len(result) != 3 {
+		t.Fatalf("expected 3 results, got %d", len(result))
+	}
+
+	// Should assign positions 1, 2, 3
+	for i, r := range result {
+		expectedPos := i + 1
+		if r.Position != expectedPos {
+			t.Errorf("commit %d: expected position %d, got %d", i, expectedPos, r.Position)
+		}
+		if !r.IsNew {
+			t.Errorf("commit %d: expected IsNew=true", i)
+		}
+	}
+}
+
+func TestMatchCommitsToPositions_AllExisting(t *testing.T) {
+	commits := []struct{ Hash, Subject, Body string }{
+		{"abc1234", "Add user model", ""},
+		{"def5678", "Add user API", ""},
+	}
+	existingBranches := []ExistingBranchInfo{
+		{Branch: "stack/feature/auth/01-add-user-model", Position: 1, Slug: "add-user-model"},
+		{Branch: "stack/feature/auth/02-add-user-api", Position: 2, Slug: "add-user-api"},
+	}
+
+	result := MatchCommitsToPositions(commits, existingBranches, "feature/auth")
+
+	if len(result) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(result))
+	}
+
+	// Should match to existing positions
+	if result[0].Position != 1 {
+		t.Errorf("commit 0: expected position 1, got %d", result[0].Position)
+	}
+	if result[0].IsNew {
+		t.Errorf("commit 0: expected IsNew=false")
+	}
+	if result[1].Position != 2 {
+		t.Errorf("commit 1: expected position 2, got %d", result[1].Position)
+	}
+}
+
+func TestMatchCommitsToPositions_AfterMerge(t *testing.T) {
+	// Simulates after PR 1 and 2 were merged - positions start at 3
+	commits := []struct{ Hash, Subject, Body string }{
+		{"abc1234", "Add user API", ""},
+		{"def5678", "Add user tests", ""},
+	}
+	existingBranches := []ExistingBranchInfo{
+		{Branch: "stack/feature/auth/03-add-user-api", Position: 3, Slug: "add-user-api"},
+		{Branch: "stack/feature/auth/04-add-user-tests", Position: 4, Slug: "add-user-tests"},
+	}
+
+	result := MatchCommitsToPositions(commits, existingBranches, "feature/auth")
+
+	if len(result) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(result))
+	}
+
+	// Should match to positions 3, 4 (not 1, 2)
+	if result[0].Position != 3 {
+		t.Errorf("commit 0: expected position 3, got %d", result[0].Position)
+	}
+	if result[1].Position != 4 {
+		t.Errorf("commit 1: expected position 4, got %d", result[1].Position)
+	}
+}
+
+func TestMatchCommitsToPositions_NewCommitAfterExisting(t *testing.T) {
+	// Existing stack has 3 commits, user adds a 4th
+	commits := []struct{ Hash, Subject, Body string }{
+		{"abc1234", "Add user model", ""},
+		{"def5678", "Add user API", ""},
+		{"ghi9012", "Add user tests", ""},
+		{"jkl3456", "Add user docs", ""}, // New commit
+	}
+	existingBranches := []ExistingBranchInfo{
+		{Branch: "stack/feature/auth/01-add-user-model", Position: 1, Slug: "add-user-model"},
+		{Branch: "stack/feature/auth/02-add-user-api", Position: 2, Slug: "add-user-api"},
+		{Branch: "stack/feature/auth/03-add-user-tests", Position: 3, Slug: "add-user-tests"},
+	}
+
+	result := MatchCommitsToPositions(commits, existingBranches, "feature/auth")
+
+	if len(result) != 4 {
+		t.Fatalf("expected 4 results, got %d", len(result))
+	}
+
+	// First 3 should match existing
+	for i := 0; i < 3; i++ {
+		if result[i].Position != i+1 {
+			t.Errorf("commit %d: expected position %d, got %d", i, i+1, result[i].Position)
+		}
+		if result[i].IsNew {
+			t.Errorf("commit %d: expected IsNew=false", i)
+		}
+	}
+
+	// 4th should be new at position 4
+	if result[3].Position != 4 {
+		t.Errorf("commit 3: expected position 4, got %d", result[3].Position)
+	}
+	if !result[3].IsNew {
+		t.Error("commit 3: expected IsNew=true")
+	}
+}
+
+func TestMatchCommitsToPositions_SlugCollision(t *testing.T) {
+	// Two commits with the same slug - should still get different positions
+	commits := []struct{ Hash, Subject, Body string }{
+		{"abc1234", "Add user model", ""},
+		{"def5678", "Add user model", ""}, // Same message = same slug
+	}
+	existingBranches := []ExistingBranchInfo{
+		{Branch: "stack/feature/auth/01-add-user-model", Position: 1, Slug: "add-user-model"},
+	}
+
+	result := MatchCommitsToPositions(commits, existingBranches, "feature/auth")
+
+	if len(result) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(result))
+	}
+
+	// First commit matches existing position 1
+	if result[0].Position != 1 {
+		t.Errorf("commit 0: expected position 1, got %d", result[0].Position)
+	}
+	if result[0].IsNew {
+		t.Errorf("commit 0: expected IsNew=false")
+	}
+
+	// Second commit should get position 2 (claimed prevents double match)
+	if result[1].Position != 2 {
+		t.Errorf("commit 1: expected position 2, got %d", result[1].Position)
+	}
+	if !result[1].IsNew {
+		t.Errorf("commit 1: expected IsNew=true")
+	}
+}
+
+func TestMatchCommitsToPositions_GapInPositions(t *testing.T) {
+	// Existing branches have a gap (position 2 was merged/deleted)
+	commits := []struct{ Hash, Subject, Body string }{
+		{"abc1234", "Add user model", ""},
+		{"def5678", "Add user tests", ""},
+	}
+	existingBranches := []ExistingBranchInfo{
+		{Branch: "stack/feature/auth/01-add-user-model", Position: 1, Slug: "add-user-model"},
+		{Branch: "stack/feature/auth/03-add-user-tests", Position: 3, Slug: "add-user-tests"},
+	}
+
+	result := MatchCommitsToPositions(commits, existingBranches, "feature/auth")
+
+	if len(result) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(result))
+	}
+
+	// Should match to positions 1 and 3 (preserving gap)
+	if result[0].Position != 1 {
+		t.Errorf("commit 0: expected position 1, got %d", result[0].Position)
+	}
+	if result[1].Position != 3 {
+		t.Errorf("commit 1: expected position 3, got %d", result[1].Position)
+	}
+}

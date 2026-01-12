@@ -121,6 +121,22 @@ func (m *MockGitHub) ListPullRequests(head string) ([]PullRequest, error) {
 	if err := m.Errors["ListPullRequests"]; err != nil {
 		return nil, err
 	}
+	// Only return open PRs
+	var openPRs []PullRequest
+	for _, pr := range m.PRs[head] {
+		if pr.State == "open" {
+			openPRs = append(openPRs, pr)
+		}
+	}
+	return openPRs, nil
+}
+
+func (m *MockGitHub) ListAllPullRequests(head string) ([]PullRequest, error) {
+	m.Calls = append(m.Calls, MockCall{Method: "ListAllPullRequests", Args: []interface{}{head}})
+	if err := m.Errors["ListAllPullRequests"]; err != nil {
+		return nil, err
+	}
+	// Return all PRs regardless of state
 	return m.PRs[head], nil
 }
 
@@ -140,11 +156,16 @@ func (m *MockGitHub) ClosePullRequest(number int) error {
 
 // AddExistingPR sets up an existing PR for a branch
 func (m *MockGitHub) AddExistingPR(branch string, number int, title string) {
+	m.AddExistingPRWithState(branch, number, title, "open")
+}
+
+// AddExistingPRWithState sets up an existing PR for a branch with a specific state
+func (m *MockGitHub) AddExistingPRWithState(branch string, number int, title string, state string) {
 	pr := PullRequest{
 		Number: number,
 		URL:    fmt.Sprintf("https://github.com/%s/%s/pull/%d", m.Repo.Owner, m.Repo.Name, number),
 		Title:  title,
-		State:  "open",
+		State:  state,
 	}
 	pr.Head.Ref = branch
 	m.PRs[branch] = append(m.PRs[branch], pr)

@@ -9,6 +9,87 @@ import (
 )
 
 var nonAlphaNum = regexp.MustCompile(`[^a-z0-9]+`)
+var stackBranchRe = regexp.MustCompile(`^stack/.+/(\d{2})-(.+)$`)
+
+// ExistingBranchInfo holds info about an existing remote stack branch
+type ExistingBranchInfo struct {
+	Branch   string
+	Position int
+	Slug     string
+}
+
+// ParseExistingBranches parses remote branches to extract position and slug
+func ParseExistingBranches(branches []string, parentBranch string) []ExistingBranchInfo {
+	var result []ExistingBranchInfo
+	prefix := "stack/" + parentBranch + "/"
+
+	for _, branch := range branches {
+		if !strings.HasPrefix(branch, prefix) {
+			continue
+		}
+		matches := stackBranchRe.FindStringSubmatch(branch)
+		if matches == nil {
+			continue
+		}
+		pos, _ := strconv.Atoi(matches[1])
+		result = append(result, ExistingBranchInfo{
+			Branch:   branch,
+			Position: pos,
+			Slug:     matches[2],
+		})
+	}
+	return result
+}
+
+// MatchCommitToExistingBranch finds existing branch for a commit by slug match
+func MatchCommitToExistingBranch(commitMsg string, existing []ExistingBranchInfo) *ExistingBranchInfo {
+	slug := Slugify(commitMsg, 5)
+	for i := range existing {
+		if existing[i].Slug == slug {
+			return &existing[i]
+		}
+	}
+	return nil
+}
+
+// MatchCommitToExistingBranchExcluding finds existing branch by slug, excluding claimed ones
+func MatchCommitToExistingBranchExcluding(commitMsg string, existing []ExistingBranchInfo, claimed map[int]bool) *ExistingBranchInfo {
+	slug := Slugify(commitMsg, 5)
+	for i := range existing {
+		if claimed[existing[i].Position] {
+			continue
+		}
+		if existing[i].Slug == slug {
+			return &existing[i]
+		}
+	}
+	return nil
+}
+
+// FindMaxPosition returns the highest position number from existing branches
+func FindMaxPosition(existing []ExistingBranchInfo) int {
+	maxPos := 0
+	for _, e := range existing {
+		if e.Position > maxPos {
+			maxPos = e.Position
+		}
+	}
+	return maxPos
+}
+
+// FindMinPosition returns the lowest position number from existing branches
+func FindMinPosition(existing []ExistingBranchInfo) int {
+	if len(existing) == 0 {
+		return 0
+	}
+	minPos := existing[0].Position
+	for _, e := range existing {
+		if e.Position < minPos {
+			minPos = e.Position
+		}
+	}
+	return minPos
+}
 
 func Slugify(s string, maxWords int) string {
 	s = strings.ToLower(s)
@@ -126,4 +207,58 @@ func StripStackFooter(body string) string {
 		return strings.TrimSpace(body[:idx])
 	}
 	return body
+}
+
+// CommitPosition represents a commit matched to its stack position
+type CommitPosition struct {
+	CommitHash string
+	CommitMsg  string
+	CommitBody string
+	Position   int
+	Branch     string
+	IsNew      bool // True if this is a new commit without existing branch
+}
+
+// MatchCommitsToPositions matches commits to their stack positions using remote branches as source of truth
+// Returns positions in the same order as the input commits
+func MatchCommitsToPositions(commits []struct{ Hash, Subject, Body string }, existingBranches []ExistingBranchInfo, parentBranch string) []CommitPosition {
+	result := make([]CommitPosition, 0, len(commits))
+
+	claimedBranches := make(map[int]bool)
+	nextPosition := FindMaxPosition(existingBranches) + 1
+	if nextPosition == 1 {
+		nextPosition = 1
+	}
+
+	for _, commit := range commits {
+		var position int
+		var branchName string
+		var isNew bool
+
+		// Match commit to existing branch by slug
+		existing := MatchCommitToExistingBranchExcluding(commit.Subject, existingBranches, claimedBranches)
+		if existing != nil {
+			claimedBranches[existing.Position] = true
+			position = existing.Position
+			branchName = existing.Branch
+			isNew = false
+		} else {
+			// New commit - assign next available position
+			position = nextPosition
+			branchName = StackBranchName(parentBranch, position, commit.Subject)
+			nextPosition++
+			isNew = true
+		}
+
+		result = append(result, CommitPosition{
+			CommitHash: commit.Hash,
+			CommitMsg:  commit.Subject,
+			CommitBody: commit.Body,
+			Position:   position,
+			Branch:     branchName,
+			IsNew:      isNew,
+		})
+	}
+
+	return result
 }

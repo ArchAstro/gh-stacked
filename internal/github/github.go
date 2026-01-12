@@ -222,6 +222,15 @@ func (c *Client) ListPullRequests(head string) ([]PullRequest, error) {
 	return prs, err
 }
 
+func (c *Client) ListAllPullRequests(head string) ([]PullRequest, error) {
+	path := fmt.Sprintf("repos/%s/%s/pulls?head=%s:%s&state=all",
+		c.repo.Owner, c.repo.Name, c.repo.Owner, head)
+
+	var prs []PullRequest
+	err := c.rest.Get(path, &prs)
+	return prs, err
+}
+
 func (c *Client) MergePullRequest(number int) error {
 	path := fmt.Sprintf("repos/%s/%s/pulls/%d/merge", c.repo.Owner, c.repo.Name, number)
 
