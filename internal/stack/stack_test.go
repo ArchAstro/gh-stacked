@@ -45,3 +45,35 @@ func TestStackBranchName(t *testing.T) {
 		})
 	}
 }
+
+func TestParseStackBranch(t *testing.T) {
+	tests := []struct {
+		branch       string
+		wantParent   string
+		wantPosition int
+		wantOk       bool
+	}{
+		{"stack/feature/auth/01-add-user-model", "feature/auth", 1, true},
+		{"stack/feature/auth/02-add-api", "feature/auth", 2, true},
+		{"stack/main-work/10-fix-bug", "main-work", 10, true},
+		{"feature/auth", "", 0, false},
+		{"not-a-stack-branch", "", 0, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.branch, func(t *testing.T) {
+			parent, pos, ok := ParseStackBranch(tt.branch)
+			if ok != tt.wantOk {
+				t.Errorf("ok = %v, want %v", ok, tt.wantOk)
+			}
+			if ok {
+				if parent != tt.wantParent {
+					t.Errorf("parent = %q, want %q", parent, tt.wantParent)
+				}
+				if pos != tt.wantPosition {
+					t.Errorf("position = %d, want %d", pos, tt.wantPosition)
+				}
+			}
+		})
+	}
+}
