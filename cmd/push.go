@@ -258,6 +258,7 @@ func runPush(cmd *cobra.Command, args []string) error {
 			prs, err := gh.ListPullRequests(existing.branch)
 			if err == nil && len(prs) > 0 {
 				entry.PRNumber = prs[0].Number
+				entry.PRURL = prs[0].URL
 				existingPRs[existing.position] = prs[0].Number
 			}
 		} else {
