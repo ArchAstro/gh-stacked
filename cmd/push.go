@@ -29,10 +29,11 @@ var (
 )
 
 type PushOutput struct {
-	Action     string `json:"action"`
-	StackID    string `json:"stack_id"`
-	PRsCreated []int  `json:"prs_created"`
-	PRsUpdated []int  `json:"prs_updated"`
+	Action        string `json:"action"`
+	StackID       string `json:"stack_id"`
+	PRsCreated    []int  `json:"prs_created"`
+	PRsUpdated    []int  `json:"prs_updated"`
+	PRsRetargeted []int  `json:"prs_retargeted"`
 }
 
 var pushCmd = &cobra.Command{
@@ -337,12 +338,23 @@ func runPush(cmd *cobra.Command, args []string) error {
 		}
 
 		fmt.Printf("Preview: %s → %s\n\n", currentBranch, baseBranch)
-		for _, e := range entries {
+		for i, e := range entries {
+			// Determine expected base for this PR
+			expectedBase := strings.TrimPrefix(baseBranch, "origin/")
+			if i > 0 {
+				expectedBase = entries[i-1].Branch
+			}
+
 			action := "CREATE"
+			retarget := ""
 			if e.PRNumber > 0 {
 				action = fmt.Sprintf("UPDATE #%d", e.PRNumber)
+				// Check if PR will need retargeting
+				if e.CurrentBase != "" && e.CurrentBase != expectedBase {
+					retarget = fmt.Sprintf(" (retarget: %s → %s)", e.CurrentBase, expectedBase)
+				}
 			}
-			fmt.Printf("  %d. [%s] %s\n", e.Position, action, e.CommitMsg)
+			fmt.Printf("  %d. [%s] %s%s\n", e.Position, action, e.CommitMsg, retarget)
 			fmt.Printf("     Branch: %s\n\n", e.Branch)
 		}
 		return nil
@@ -352,9 +364,10 @@ func runPush(cmd *cobra.Command, args []string) error {
 	repo := gh.Repository()
 	_ = repo // repo available for future use
 	output := PushOutput{
-		StackID:    currentBranch,
-		PRsCreated: []int{},
-		PRsUpdated: []int{},
+		StackID:       currentBranch,
+		PRsCreated:    []int{},
+		PRsUpdated:    []int{},
+		PRsRetargeted: []int{},
 	}
 
 	for i, entry := range entries {
@@ -387,6 +400,7 @@ func runPush(cmd *cobra.Command, args []string) error {
 				if err != nil {
 					return fmt.Errorf("failed to retarget PR #%d to %s: %w", entry.PRNumber, prBase, err)
 				}
+				output.PRsRetargeted = append(output.PRsRetargeted, entry.PRNumber)
 				if !jsonOutput {
 					fmt.Printf("Retargeted PR #%d: %s → %s\n", entry.PRNumber, entry.CurrentBase, prBase)
 				}
@@ -465,8 +479,11 @@ func runPush(cmd *cobra.Command, args []string) error {
 		return json.NewEncoder(os.Stdout).Encode(output)
 	}
 
-	fmt.Printf("\nStack pushed: %d created, %d updated\n",
-		len(output.PRsCreated), len(output.PRsUpdated))
+	summary := fmt.Sprintf("\nStack pushed: %d created, %d updated", len(output.PRsCreated), len(output.PRsUpdated))
+	if len(output.PRsRetargeted) > 0 {
+		summary += fmt.Sprintf(", %d retargeted", len(output.PRsRetargeted))
+	}
+	fmt.Println(summary)
 
 	return nil
 }
