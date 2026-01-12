@@ -112,3 +112,7 @@ func (g *Git) ResetHard(ref string) error {
 	_, err := g.run("reset", "--hard", ref)
 	return err
 }
+
+func (g *Git) Run(args ...string) (string, error) {
+	return g.run(args...)
+}
