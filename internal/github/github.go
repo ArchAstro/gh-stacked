@@ -61,11 +61,7 @@ func NewClient() (*Client, error) {
 	}, nil
 }
 
-// parseGitRemote extracts owner/repo from git remote URL
-// Supports formats:
-//   - git@github.com:owner/repo.git
-//   - git@github.com-alias:owner/repo.git
-//   - https://github.com/owner/repo.git
+// parseGitRemote gets the origin remote URL and parses it
 func parseGitRemote() (owner, name string, err error) {
 	cmd := exec.Command("git", "remote", "get-url", "origin")
 	out, err := cmd.Output()
@@ -74,7 +70,15 @@ func parseGitRemote() (owner, name string, err error) {
 	}
 
 	url := strings.TrimSpace(string(out))
+	return parseRemoteURL(url)
+}
 
+// parseRemoteURL extracts owner/repo from a git remote URL
+// Supports formats:
+//   - git@github.com:owner/repo.git
+//   - git@github.com-alias:owner/repo.git
+//   - https://github.com/owner/repo.git
+func parseRemoteURL(url string) (owner, name string, err error) {
 	// SSH format: git@github.com:owner/repo.git or git@github.com-alias:owner/repo.git
 	sshRe := regexp.MustCompile(`git@[^:]+:([^/]+)/([^/]+?)(?:\.git)?$`)
 	if matches := sshRe.FindStringSubmatch(url); matches != nil {
