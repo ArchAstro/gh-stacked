@@ -3,6 +3,7 @@ package cmd
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/calvin/gh-stacked/internal/git"
@@ -799,6 +800,291 @@ func TestRunPush_NeverCreatesAtExistingPosition(t *testing.T) {
 	expectedPrefix := "stack/feature/auth/04-"
 	if len(newBranch) < len(expectedPrefix) || newBranch[:len(expectedPrefix)] != expectedPrefix {
 		t.Errorf("expected new branch at position 04, got: %s", newBranch)
+	}
+}
+
+// TestRunPush_MissingPRInMiddle tests the exact scenario that caused the bug:
+// - Commits A, B, C exist locally
+// - PRs exist for A (position 20) and C (position 22), but B has no PR
+// - B should get position 21 (the hole between 20 and 22)
+// - C's PR should be retargeted to point to B's new branch
+func TestRunPush_MissingPRInMiddle(t *testing.T) {
+	mockGit := git.NewMockGit()
+	mockGit.CurrentBranch = "feature/analytics"
+	mockGit.BaseBranch = "main"
+	mockGit.Commits = []git.Commit{
+		{Hash: "aaa1111", Subject: "Add analytics base"},        // has PR at position 20
+		{Hash: "bbb2222", Subject: "Add visitor properties"},    // NO PR - should get position 21
+		{Hash: "ccc3333", Subject: "Fix analytics error"},       // has PR at position 22
+	}
+	mockGit.RemoteBranches = []string{
+		"stack/feature/analytics/20-add-analytics-base",
+		"stack/feature/analytics/22-fix-analytics-error",
+		// Note: position 21 is empty (the hole)
+	}
+
+	mockGH := github.NewMockGitHub()
+	// PR at position 20 - currently targets main
+	mockGH.AddExistingPR("stack/feature/analytics/20-add-analytics-base", 95, "[20/22] Add analytics base")
+	// PR at position 22 - currently targets position 20's branch (will need retargeting)
+	pr22 := github.PullRequest{
+		Number: 96,
+		Title:  "[22/22] Fix analytics error",
+		Body:   "Some description\n\n---\n📚 **Stack:** test",
+		URL:    "https://github.com/test/repo/pull/96",
+		State:  "open",
+	}
+	pr22.Head.Ref = "stack/feature/analytics/22-fix-analytics-error"
+	pr22.Base.Ref = "stack/feature/analytics/20-add-analytics-base" // Current base
+	mockGH.PRs["stack/feature/analytics/22-fix-analytics-error"] = []github.PullRequest{pr22}
+
+	var createdBranches []string
+	oldNewGit := newGit
+	oldNewGitHub := newGitHub
+	defer func() {
+		newGit = oldNewGit
+		newGitHub = oldNewGitHub
+	}()
+
+	mockGit.OnCreateBranch = func(name, hash string) error {
+		createdBranches = append(createdBranches, name)
+		return nil
+	}
+
+	newGit = func() git.GitOperations { return mockGit }
+	newGitHub = func() (github.GitHubOperations, error) { return mockGH, nil }
+
+	err := runPush(nil, []string{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should create exactly 1 new PR (for the missing commit B)
+	if len(mockGH.CreatedPRs) != 1 {
+		t.Fatalf("expected 1 PR created, got %d", len(mockGH.CreatedPRs))
+	}
+
+	// The new PR should be at position 21 (the hole), NOT position 23
+	newBranch := mockGH.CreatedPRs[0].Head
+	expectedPrefix := "stack/feature/analytics/21-"
+	if len(newBranch) < len(expectedPrefix) || newBranch[:len(expectedPrefix)] != expectedPrefix {
+		t.Errorf("expected new branch at position 21 (the hole), got: %s", newBranch)
+	}
+
+	// Verify the new PR's base is position 20's branch
+	if mockGH.CreatedPRs[0].Base != "stack/feature/analytics/20-add-analytics-base" {
+		t.Errorf("expected new PR to target position 20, got base: %s", mockGH.CreatedPRs[0].Base)
+	}
+
+	// PR 96 (position 22) should have been retargeted to point to the new position 21 branch
+	var retargetedTo string
+	for _, call := range mockGH.Calls {
+		if call.Method == "UpdatePullRequestBase" {
+			args := call.Args
+			if args[0].(int) == 96 {
+				retargetedTo = args[1].(string)
+			}
+		}
+	}
+	if retargetedTo == "" {
+		t.Error("expected PR #96 to be retargeted, but UpdatePullRequestBase was not called for it")
+	} else if retargetedTo != newBranch {
+		t.Errorf("expected PR #96 to be retargeted to %s, got: %s", newBranch, retargetedTo)
+	}
+}
+
+// TestRunPush_MissingPRInMiddle_NoHoleAvailable tests the error case when there's no hole
+func TestRunPush_MissingPRInMiddle_NoHoleAvailable(t *testing.T) {
+	mockGit := git.NewMockGit()
+	mockGit.CurrentBranch = "feature/auth"
+	mockGit.BaseBranch = "main"
+	mockGit.Commits = []git.Commit{
+		{Hash: "aaa1111", Subject: "First commit"},     // has PR at position 1
+		{Hash: "bbb2222", Subject: "New commit"},       // NO PR - needs position between 1 and 2
+		{Hash: "ccc3333", Subject: "Third commit"},     // has PR at position 2
+	}
+	mockGit.RemoteBranches = []string{
+		"stack/feature/auth/01-first-commit",
+		"stack/feature/auth/02-third-commit",
+		// No hole between 1 and 2!
+	}
+
+	mockGH := github.NewMockGitHub()
+	mockGH.AddExistingPR("stack/feature/auth/01-first-commit", 100, "First commit")
+	mockGH.AddExistingPR("stack/feature/auth/02-third-commit", 101, "Third commit")
+
+	oldNewGit := newGit
+	oldNewGitHub := newGitHub
+	defer func() {
+		newGit = oldNewGit
+		newGitHub = oldNewGitHub
+	}()
+	newGit = func() git.GitOperations { return mockGit }
+	newGitHub = func() (github.GitHubOperations, error) { return mockGH, nil }
+
+	err := runPush(nil, []string{})
+
+	// Should error because there's no available position between 1 and 2
+	if err == nil {
+		t.Fatal("expected error when no hole available, got nil")
+	}
+	if !strings.Contains(err.Error(), "no available position") {
+		t.Errorf("expected 'no available position' error, got: %v", err)
+	}
+}
+
+// TestRunPush_NewCommitAtStart tests inserting a new commit at the beginning
+func TestRunPush_NewCommitAtStart(t *testing.T) {
+	mockGit := git.NewMockGit()
+	mockGit.CurrentBranch = "feature/auth"
+	mockGit.BaseBranch = "main"
+	mockGit.Commits = []git.Commit{
+		{Hash: "aaa1111", Subject: "New first commit"},  // NO PR - should get position 1
+		{Hash: "bbb2222", Subject: "Old first commit"},  // has PR at position 5
+	}
+	mockGit.RemoteBranches = []string{
+		"stack/feature/auth/05-old-first-commit",
+		// Positions 1-4 are available
+	}
+
+	mockGH := github.NewMockGitHub()
+	pr5 := github.PullRequest{
+		Number: 100,
+		Title:  "[5/5] Old first commit",
+		URL:    "https://github.com/test/repo/pull/100",
+		State:  "open",
+	}
+	pr5.Head.Ref = "stack/feature/auth/05-old-first-commit"
+	pr5.Base.Ref = "main"
+	mockGH.PRs["stack/feature/auth/05-old-first-commit"] = []github.PullRequest{pr5}
+
+	oldNewGit := newGit
+	oldNewGitHub := newGitHub
+	defer func() {
+		newGit = oldNewGit
+		newGitHub = oldNewGitHub
+	}()
+	newGit = func() git.GitOperations { return mockGit }
+	newGitHub = func() (github.GitHubOperations, error) { return mockGH, nil }
+
+	err := runPush(nil, []string{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// New commit should get position 1 (first available before position 5)
+	if len(mockGH.CreatedPRs) != 1 {
+		t.Fatalf("expected 1 PR created, got %d", len(mockGH.CreatedPRs))
+	}
+
+	newBranch := mockGH.CreatedPRs[0].Head
+	expectedPrefix := "stack/feature/auth/01-"
+	if len(newBranch) < len(expectedPrefix) || newBranch[:len(expectedPrefix)] != expectedPrefix {
+		t.Errorf("expected new branch at position 01, got: %s", newBranch)
+	}
+
+	// New PR should target main (it's first in the stack)
+	if mockGH.CreatedPRs[0].Base != "main" {
+		t.Errorf("expected new PR to target main, got: %s", mockGH.CreatedPRs[0].Base)
+	}
+
+	// PR 100 (position 5) should be retargeted to the new position 1 branch
+	var retargetedTo string
+	for _, call := range mockGH.Calls {
+		if call.Method == "UpdatePullRequestBase" {
+			args := call.Args
+			if args[0].(int) == 100 {
+				retargetedTo = args[1].(string)
+			}
+		}
+	}
+	if retargetedTo != newBranch {
+		t.Errorf("expected PR #100 to be retargeted to %s, got: %s", newBranch, retargetedTo)
+	}
+}
+
+// TestRunPush_MultipleNewCommitsInSequence tests inserting multiple new commits in a row
+func TestRunPush_MultipleNewCommitsInSequence(t *testing.T) {
+	mockGit := git.NewMockGit()
+	mockGit.CurrentBranch = "feature/auth"
+	mockGit.BaseBranch = "main"
+	mockGit.Commits = []git.Commit{
+		{Hash: "aaa1111", Subject: "Existing commit"},    // has PR at position 10
+		{Hash: "bbb2222", Subject: "New commit one"},     // NO PR - should get position 11
+		{Hash: "ccc3333", Subject: "New commit two"},     // NO PR - should get position 12
+		{Hash: "ddd4444", Subject: "Another existing"},   // has PR at position 20
+	}
+	mockGit.RemoteBranches = []string{
+		"stack/feature/auth/10-existing-commit",
+		"stack/feature/auth/20-another-existing",
+		// Positions 11-19 are available
+	}
+
+	mockGH := github.NewMockGitHub()
+	mockGH.AddExistingPR("stack/feature/auth/10-existing-commit", 100, "Existing commit")
+	pr20 := github.PullRequest{
+		Number: 101,
+		Title:  "[20/20] Another existing",
+		URL:    "https://github.com/test/repo/pull/101",
+		State:  "open",
+	}
+	pr20.Head.Ref = "stack/feature/auth/20-another-existing"
+	pr20.Base.Ref = "stack/feature/auth/10-existing-commit"
+	mockGH.PRs["stack/feature/auth/20-another-existing"] = []github.PullRequest{pr20}
+
+	oldNewGit := newGit
+	oldNewGitHub := newGitHub
+	defer func() {
+		newGit = oldNewGit
+		newGitHub = oldNewGitHub
+	}()
+	newGit = func() git.GitOperations { return mockGit }
+	newGitHub = func() (github.GitHubOperations, error) { return mockGH, nil }
+
+	err := runPush(nil, []string{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should create 2 new PRs
+	if len(mockGH.CreatedPRs) != 2 {
+		t.Fatalf("expected 2 PRs created, got %d", len(mockGH.CreatedPRs))
+	}
+
+	// First new commit should get position 11
+	branch1 := mockGH.CreatedPRs[0].Head
+	if !strings.HasPrefix(branch1, "stack/feature/auth/11-") {
+		t.Errorf("expected first new branch at position 11, got: %s", branch1)
+	}
+
+	// Second new commit should get position 12
+	branch2 := mockGH.CreatedPRs[1].Head
+	if !strings.HasPrefix(branch2, "stack/feature/auth/12-") {
+		t.Errorf("expected second new branch at position 12, got: %s", branch2)
+	}
+
+	// First new PR should target position 10
+	if mockGH.CreatedPRs[0].Base != "stack/feature/auth/10-existing-commit" {
+		t.Errorf("expected first new PR to target position 10, got: %s", mockGH.CreatedPRs[0].Base)
+	}
+
+	// Second new PR should target position 11 (the first new PR)
+	if mockGH.CreatedPRs[1].Base != branch1 {
+		t.Errorf("expected second new PR to target position 11, got: %s", mockGH.CreatedPRs[1].Base)
+	}
+
+	// PR 101 (position 20) should be retargeted to position 12 (second new PR)
+	var retargetedTo string
+	for _, call := range mockGH.Calls {
+		if call.Method == "UpdatePullRequestBase" {
+			args := call.Args
+			if args[0].(int) == 101 {
+				retargetedTo = args[1].(string)
+			}
+		}
+	}
+	if retargetedTo != branch2 {
+		t.Errorf("expected PR #101 to be retargeted to %s, got: %s", branch2, retargetedTo)
 	}
 }
 
