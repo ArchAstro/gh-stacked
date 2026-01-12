@@ -91,6 +91,15 @@ func (g *Git) AutosquashRebase(base string) error {
 	return cmd.Run()
 }
 
+func (g *Git) InteractiveRebase(base string) error {
+	// Fully interactive rebase - connects to terminal
+	cmd := exec.Command("git", "rebase", "-i", base)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
 func (g *Git) HasStagedChanges() (bool, error) {
 	out, err := g.run("diff", "--cached", "--name-only")
 	if err != nil {

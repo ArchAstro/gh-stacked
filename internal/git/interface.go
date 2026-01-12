@@ -11,6 +11,7 @@ type GitOperations interface {
 	PushBranch(remote, branchName string, force bool) error
 	CreateFixupCommit(targetHash string) error
 	AutosquashRebase(base string) error
+	InteractiveRebase(base string) error
 	AbortRebase() error
 	GetOriginalHead() (string, error)
 	ResetHard(ref string) error

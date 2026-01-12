@@ -111,6 +111,31 @@ func runPush(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	// Handle --regroup: interactive rebase before pushing
+	if pushRegroup {
+		fmt.Printf("Opening interactive rebase for %d commits...\n", len(commits))
+		fmt.Println("Reorder, squash, or edit commits as needed. Save and close to continue.")
+		fmt.Println()
+
+		err := g.InteractiveRebase(baseBranch)
+		if err != nil {
+			return fmt.Errorf("interactive rebase failed: %w\n\nIf there were conflicts, resolve them and run: gh stacked push", err)
+		}
+
+		// Re-read commits after rebase
+		commits, err = g.GetCommitsSinceBase(baseBranch)
+		if err != nil {
+			return fmt.Errorf("failed to get commits after rebase: %w", err)
+		}
+
+		if len(commits) == 0 {
+			fmt.Println("No commits remaining after rebase")
+			return nil
+		}
+
+		fmt.Printf("\nRebase complete. Proceeding with %d commits.\n\n", len(commits))
+	}
+
 	// Get GitHub client
 	gh, err := newGitHub()
 	if err != nil {

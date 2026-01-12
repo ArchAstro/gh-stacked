@@ -101,6 +101,11 @@ func (m *MockGit) AutosquashRebase(base string) error {
 	return m.Errors["AutosquashRebase"]
 }
 
+func (m *MockGit) InteractiveRebase(base string) error {
+	m.Calls = append(m.Calls, MockCall{Method: "InteractiveRebase", Args: []interface{}{base}})
+	return m.Errors["InteractiveRebase"]
+}
+
 func (m *MockGit) AbortRebase() error {
 	m.Calls = append(m.Calls, MockCall{Method: "AbortRebase"})
 	return m.Errors["AbortRebase"]
