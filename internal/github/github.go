@@ -5,6 +5,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"os/exec"
+	"regexp"
+	"strings"
 
 	"github.com/cli/go-gh/v2/pkg/api"
 	"github.com/cli/go-gh/v2/pkg/repository"
@@ -32,10 +35,20 @@ func NewClient() (*Client, error) {
 		return nil, err
 	}
 
-	// Get current repo
+	// Get current repo - try standard method first
 	repo, err := repository.Current()
 	if err != nil {
-		return nil, err
+		// Fallback: parse git remote URL directly
+		// This handles SSH aliases like github.com-aa
+		owner, name, parseErr := parseGitRemote()
+		if parseErr != nil {
+			return nil, fmt.Errorf("unable to determine current repository: %w", err)
+		}
+		return &Client{
+			rest:    rest,
+			graphql: graphql,
+			repo:    Repository{Owner: owner, Name: name},
+		}, nil
 	}
 
 	return &Client{
@@ -46,6 +59,35 @@ func NewClient() (*Client, error) {
 			Name:  repo.Name,
 		},
 	}, nil
+}
+
+// parseGitRemote extracts owner/repo from git remote URL
+// Supports formats:
+//   - git@github.com:owner/repo.git
+//   - git@github.com-alias:owner/repo.git
+//   - https://github.com/owner/repo.git
+func parseGitRemote() (owner, name string, err error) {
+	cmd := exec.Command("git", "remote", "get-url", "origin")
+	out, err := cmd.Output()
+	if err != nil {
+		return "", "", fmt.Errorf("failed to get git remote: %w", err)
+	}
+
+	url := strings.TrimSpace(string(out))
+
+	// SSH format: git@github.com:owner/repo.git or git@github.com-alias:owner/repo.git
+	sshRe := regexp.MustCompile(`git@[^:]+:([^/]+)/([^/]+?)(?:\.git)?$`)
+	if matches := sshRe.FindStringSubmatch(url); matches != nil {
+		return matches[1], matches[2], nil
+	}
+
+	// HTTPS format: https://github.com/owner/repo.git
+	httpsRe := regexp.MustCompile(`https://[^/]+/([^/]+)/([^/]+?)(?:\.git)?$`)
+	if matches := httpsRe.FindStringSubmatch(url); matches != nil {
+		return matches[1], matches[2], nil
+	}
+
+	return "", "", fmt.Errorf("unable to parse remote URL: %s", url)
 }
 
 func (c *Client) Repository() Repository {
