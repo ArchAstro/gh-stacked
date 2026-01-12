@@ -2,6 +2,7 @@
 package git
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"strings"
@@ -17,6 +18,10 @@ func (g *Git) run(args ...string) (string, error) {
 	cmd := exec.Command("git", args...)
 	out, err := cmd.Output()
 	if err != nil {
+		// Include stderr in error message if available
+		if exitErr, ok := err.(*exec.ExitError); ok && len(exitErr.Stderr) > 0 {
+			return "", fmt.Errorf("%w: %s", err, strings.TrimSpace(string(exitErr.Stderr)))
+		}
 		return "", err
 	}
 	return strings.TrimSpace(string(out)), nil
@@ -96,7 +101,7 @@ func (g *Git) PushBranch(remote, branchName string, force bool) error {
 }
 
 func (g *Git) CreateFixupCommit(targetHash string) error {
-	_, err := g.run("commit", "--fixup="+targetHash)
+	_, err := g.run("commit", "--fixup="+targetHash, "--no-verify")
 	return err
 }
 
@@ -104,7 +109,21 @@ func (g *Git) AutosquashRebase(base string) error {
 	// GIT_SEQUENCE_EDITOR=true makes rebase non-interactive
 	cmd := exec.Command("git", "rebase", "-i", "--autosquash", base)
 	cmd.Env = append(os.Environ(), "GIT_SEQUENCE_EDITOR=true")
+	// Connect stdout/stderr so we can see progress and any prompts
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+// AutosquashRebaseQuiet runs autosquash rebase without output (for non-verbose mode)
+func (g *Git) AutosquashRebaseQuiet(base string) error {
+	cmd := exec.Command("git", "rebase", "-i", "--autosquash", base)
+	cmd.Env = append(os.Environ(), "GIT_SEQUENCE_EDITOR=true")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%w: %s", err, string(out))
+	}
+	return nil
 }
 
 func (g *Git) InteractiveRebase(base string) error {

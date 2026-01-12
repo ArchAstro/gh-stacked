@@ -12,6 +12,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var amendVerbose bool
+
 // Dependency injection points for testing
 var amendNewGit = func() git.GitOperations { return git.New() }
 
@@ -42,6 +44,7 @@ You must stage your changes before running this command.`,
 
 func init() {
 	rootCmd.AddCommand(amendCmd)
+	amendCmd.Flags().BoolVarP(&amendVerbose, "verbose", "v", false, "Show detailed progress output")
 }
 
 func runAmend(cmd *cobra.Command, args []string) error {
@@ -52,16 +55,11 @@ func runAmend(cmd *cobra.Command, args []string) error {
 
 	g := amendNewGit()
 
-	// Check for staged changes
-	hasStaged, err := g.HasStagedChanges()
-	if err != nil {
-		return fmt.Errorf("failed to check staged changes: %w", err)
-	}
-	if !hasStaged {
-		return fmt.Errorf("no staged changes. Stage files first with `git add`")
+	if amendVerbose {
+		fmt.Println("[verbose] Getting current branch...")
 	}
 
-	// Get current branch
+	// Get current branch first (needed to check for existing fixup)
 	currentBranch, err := g.GetCurrentBranch()
 	if err != nil {
 		return fmt.Errorf("failed to get current branch: %w", err)
@@ -71,10 +69,20 @@ func runAmend(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("run amend from your feature branch, not a stack branch")
 	}
 
+	if amendVerbose {
+		fmt.Printf("[verbose] Current branch: %s\n", currentBranch)
+		fmt.Println("[verbose] Getting base branch...")
+	}
+
 	// Get base branch
 	baseBranch, err := g.GetBaseBranch()
 	if err != nil {
 		return fmt.Errorf("failed to get base branch: %w", err)
+	}
+
+	if amendVerbose {
+		fmt.Printf("[verbose] Base branch: %s\n", baseBranch)
+		fmt.Println("[verbose] Getting commits since base...")
 	}
 
 	// Get commits since base
@@ -83,43 +91,122 @@ func runAmend(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to get commits: %w", err)
 	}
 
-	if prPosition < 1 || prPosition > len(commits) {
-		return fmt.Errorf("PR %d not found in current stack (have %d commits)", prPosition, len(commits))
+	if amendVerbose {
+		fmt.Printf("[verbose] Found %d commits in stack\n", len(commits))
+		fmt.Println("[verbose] Fetching remote branches...")
 	}
 
-	targetCommit := commits[prPosition-1]
+	// Fetch existing remote branches for this stack - SOURCE OF TRUTH for positions
+	remoteBranches, err := g.ListRemoteBranches("origin/stack/" + currentBranch + "/*")
+	if err != nil {
+		remoteBranches = nil
+	}
+	existingBranches := stack.ParseExistingBranches(remoteBranches, currentBranch)
 
-	// Save original HEAD for recovery
-	origHead, err := g.GetCurrentBranch()
+	if amendVerbose {
+		fmt.Printf("[verbose] Found %d existing remote branches\n", len(existingBranches))
+	}
+
+	// Match commits to their positions using remote branches
+	commitPositions := stack.MatchCommitsToPositions(
+		stack.GitCommitsToInfos(commits),
+		existingBranches,
+		currentBranch,
+	)
+
+	// Find the commit that matches the requested position
+	var targetIdx int = -1
+	var targetCommit git.Commit
+	for i, cp := range commitPositions {
+		if cp.Position == prPosition {
+			targetIdx = i
+			targetCommit = commits[i]
+			break
+		}
+	}
+
+	if targetIdx == -1 {
+		// List available positions
+		var positions []int
+		for _, cp := range commitPositions {
+			positions = append(positions, cp.Position)
+		}
+		return fmt.Errorf("PR position %d not found in current stack (available: %v)", prPosition, positions)
+	}
+
+	if amendVerbose {
+		fmt.Printf("[verbose] Target commit: %s %s (position %d)\n", targetCommit.Hash[:7], targetCommit.Subject, prPosition)
+	}
+
+	// Check if there's already a fixup commit at the top for this target
+	fixupPrefix := "fixup! " + targetCommit.Subject
+	hasExistingFixup := len(commits) > 0 && commits[len(commits)-1].Subject == fixupPrefix
+
+	// Save original HEAD hash BEFORE creating fixup commit (for recovery)
+	origHead, err := g.Run("rev-parse", "HEAD")
 	if err != nil {
 		return fmt.Errorf("failed to save original state: %w", err)
 	}
-	_ = origHead // We'll use ORIG_HEAD from git
 
-	// Create fixup commit
-	err = g.CreateFixupCommit(targetCommit.Hash)
-	if err != nil {
-		return fmt.Errorf("failed to create fixup commit: %w", err)
+	if hasExistingFixup {
+		if amendVerbose {
+			fmt.Printf("[verbose] Found existing fixup commit at top: %s\n", commits[len(commits)-1].Hash[:7])
+		}
+		if !jsonOutput {
+			fmt.Println("Using existing fixup commit from previous attempt...")
+		}
+	} else {
+		// No existing fixup - need staged changes to create one
+		if amendVerbose {
+			fmt.Println("[verbose] Checking for staged changes...")
+		}
+		hasStaged, err := g.HasStagedChanges()
+		if err != nil {
+			return fmt.Errorf("failed to check staged changes: %w", err)
+		}
+		if !hasStaged {
+			return fmt.Errorf("no staged changes. Stage files first with `git add`")
+		}
+
+		if amendVerbose {
+			fmt.Printf("[verbose] Saved original HEAD: %s\n", origHead[:7])
+			fmt.Println("[verbose] Creating fixup commit...")
+		}
+
+		// Create fixup commit
+		err = g.CreateFixupCommit(targetCommit.Hash)
+		if err != nil {
+			return fmt.Errorf("failed to create fixup commit: %w", err)
+		}
+	}
+
+	if amendVerbose {
+		fmt.Printf("[verbose] Running autosquash rebase onto %s...\n", baseBranch)
+		fmt.Println("[verbose] (This may take a while with many commits)")
 	}
 
 	// Run autosquash rebase
 	err = g.AutosquashRebase(baseBranch)
 	if err != nil {
-		// Attempt to abort and restore
+		// Attempt to abort and restore to state BEFORE fixup commit
 		g.AbortRebase()
-		origRef, _ := g.GetOriginalHead()
-		if origRef != "" {
-			g.ResetHard(origRef)
-		}
+		g.ResetHard(origHead)
 
 		return fmt.Errorf(`conflict rebasing "%s" onto %s
-Restored original branch state.
+Restored original branch state (fixup commit removed).
 
-To resolve manually:
-  git rebase %s
-  # fix conflicts
-  git rebase --continue
-  gh stacked push`, targetCommit.Subject, baseBranch, baseBranch)
+This usually means your staged changes conflict with commits after position %d.
+The file may have been modified, renamed, or deleted in later commits.
+
+To amend manually:
+  git rebase -i %s
+  # move the target commit, edit it, apply your changes
+  # then continue the rebase
+  gh stacked push`, targetCommit.Subject, baseBranch, prPosition, baseBranch)
+	}
+
+	if amendVerbose {
+		fmt.Println("[verbose] Rebase complete. Getting new commits...")
 	}
 
 	// Get new commits after rebase
@@ -128,38 +215,70 @@ To resolve manually:
 		return fmt.Errorf("failed to get commits after rebase: %w", err)
 	}
 
+	// Re-match commits to positions after rebase (hashes changed but subjects same)
+	newCommitPositions := stack.MatchCommitsToPositions(
+		stack.GitCommitsToInfos(newCommits),
+		existingBranches,
+		currentBranch,
+	)
+
+	// Find affected commits (from targetIdx onwards)
+	affectedCount := len(newCommits) - targetIdx
+	if amendVerbose {
+		fmt.Printf("[verbose] Found %d commits after rebase\n", len(newCommits))
+		fmt.Printf("[verbose] Pushing %d affected branches...\n", affectedCount)
+	}
+
+	// Find the new target commit hash
+	var newTargetCommit git.Commit
+	for i, cp := range newCommitPositions {
+		if cp.Position == prPosition {
+			newTargetCommit = newCommits[i]
+			break
+		}
+	}
+
 	// Push affected branches (from amended position onward)
 	output := AmendOutput{
 		Amended: prPosition,
-		Commit:  newCommits[prPosition-1].Hash[:7],
+		Commit:  newTargetCommit.Hash[:7],
 		Rebased: []int{},
 		Pushed:  []string{},
 	}
 
-	for i := prPosition - 1; i < len(newCommits); i++ {
+	// Push all commits from targetIdx onwards
+	for i := targetIdx; i < len(newCommits); i++ {
 		commit := newCommits[i]
-		branchName := stack.StackBranchName(currentBranch, i+1, commit.Subject)
+		cp := newCommitPositions[i]
 
-		err := g.CreateBranchAtCommit(branchName, commit.Hash)
+		if amendVerbose {
+			fmt.Printf("[verbose] Creating branch %s at %s...\n", cp.Branch, commit.Hash[:7])
+		}
+
+		err := g.CreateBranchAtCommit(cp.Branch, commit.Hash)
 		if err != nil {
-			return fmt.Errorf("failed to update branch %s: %w", branchName, err)
+			return fmt.Errorf("failed to update branch %s: %w", cp.Branch, err)
 		}
 
-		err = g.PushBranch("origin", branchName, true)
+		if amendVerbose {
+			fmt.Printf("[verbose] Pushing %s...\n", cp.Branch)
+		}
+
+		err = g.PushBranch("origin", cp.Branch, true)
 		if err != nil {
-			return fmt.Errorf("failed to push %s: %w", branchName, err)
+			return fmt.Errorf("failed to push %s: %w", cp.Branch, err)
 		}
 
-		if i+1 > prPosition {
-			output.Rebased = append(output.Rebased, i+1)
+		if cp.Position > prPosition {
+			output.Rebased = append(output.Rebased, cp.Position)
 		}
-		output.Pushed = append(output.Pushed, branchName)
+		output.Pushed = append(output.Pushed, cp.Branch)
 
 		if !jsonOutput {
-			if i+1 == prPosition {
-				fmt.Printf("Amended: %s\n", branchName)
+			if cp.Position == prPosition {
+				fmt.Printf("Amended: %s\n", cp.Branch)
 			} else {
-				fmt.Printf("Rebased: %s\n", branchName)
+				fmt.Printf("Rebased: %s\n", cp.Branch)
 			}
 		}
 	}

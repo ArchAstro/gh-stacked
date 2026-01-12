@@ -4,6 +4,8 @@ package stack
 import (
 	"strings"
 	"testing"
+
+	"github.com/calvin/gh-stacked/internal/git"
 )
 
 func TestSlugify(t *testing.T) {
@@ -229,8 +231,67 @@ func TestStripStackFooter(t *testing.T) {
 	}
 }
 
+func TestGitCommitsToInfos(t *testing.T) {
+	commits := []git.Commit{
+		{Hash: "abc1234", Subject: "Add user model", Body: "Description of model"},
+		{Hash: "def5678", Subject: "Add user API", Body: ""},
+		{Hash: "ghi9012", Subject: "Add user tests", Body: "Test coverage details"},
+	}
+
+	result := GitCommitsToInfos(commits)
+
+	if len(result) != 3 {
+		t.Fatalf("expected 3 results, got %d", len(result))
+	}
+
+	// Verify all fields are copied correctly
+	for i, r := range result {
+		if r.Hash != commits[i].Hash {
+			t.Errorf("commit %d: expected Hash %q, got %q", i, commits[i].Hash, r.Hash)
+		}
+		if r.Subject != commits[i].Subject {
+			t.Errorf("commit %d: expected Subject %q, got %q", i, commits[i].Subject, r.Subject)
+		}
+		if r.Body != commits[i].Body {
+			t.Errorf("commit %d: expected Body %q, got %q", i, commits[i].Body, r.Body)
+		}
+	}
+}
+
+func TestGitCommitsToInfos_Empty(t *testing.T) {
+	commits := []git.Commit{}
+
+	result := GitCommitsToInfos(commits)
+
+	if len(result) != 0 {
+		t.Errorf("expected 0 results for empty input, got %d", len(result))
+	}
+}
+
+func TestGitCommitsToInfos_Single(t *testing.T) {
+	commits := []git.Commit{
+		{Hash: "abc1234", Subject: "Single commit", Body: "Details here"},
+	}
+
+	result := GitCommitsToInfos(commits)
+
+	if len(result) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(result))
+	}
+
+	if result[0].Hash != "abc1234" {
+		t.Errorf("expected Hash abc1234, got %s", result[0].Hash)
+	}
+	if result[0].Subject != "Single commit" {
+		t.Errorf("expected Subject 'Single commit', got %s", result[0].Subject)
+	}
+	if result[0].Body != "Details here" {
+		t.Errorf("expected Body 'Details here', got %s", result[0].Body)
+	}
+}
+
 func TestMatchCommitsToPositions_NoExistingBranches(t *testing.T) {
-	commits := []struct{ Hash, Subject, Body string }{
+	commits := []CommitInfo{
 		{"abc1234", "Add user model", ""},
 		{"def5678", "Add user API", ""},
 		{"ghi9012", "Add user tests", ""},
@@ -256,7 +317,7 @@ func TestMatchCommitsToPositions_NoExistingBranches(t *testing.T) {
 }
 
 func TestMatchCommitsToPositions_AllExisting(t *testing.T) {
-	commits := []struct{ Hash, Subject, Body string }{
+	commits := []CommitInfo{
 		{"abc1234", "Add user model", ""},
 		{"def5678", "Add user API", ""},
 	}
@@ -285,7 +346,7 @@ func TestMatchCommitsToPositions_AllExisting(t *testing.T) {
 
 func TestMatchCommitsToPositions_AfterMerge(t *testing.T) {
 	// Simulates after PR 1 and 2 were merged - positions start at 3
-	commits := []struct{ Hash, Subject, Body string }{
+	commits := []CommitInfo{
 		{"abc1234", "Add user API", ""},
 		{"def5678", "Add user tests", ""},
 	}
@@ -311,7 +372,7 @@ func TestMatchCommitsToPositions_AfterMerge(t *testing.T) {
 
 func TestMatchCommitsToPositions_NewCommitAfterExisting(t *testing.T) {
 	// Existing stack has 3 commits, user adds a 4th
-	commits := []struct{ Hash, Subject, Body string }{
+	commits := []CommitInfo{
 		{"abc1234", "Add user model", ""},
 		{"def5678", "Add user API", ""},
 		{"ghi9012", "Add user tests", ""},
@@ -350,7 +411,7 @@ func TestMatchCommitsToPositions_NewCommitAfterExisting(t *testing.T) {
 
 func TestMatchCommitsToPositions_SlugCollision(t *testing.T) {
 	// Two commits with the same slug - should still get different positions
-	commits := []struct{ Hash, Subject, Body string }{
+	commits := []CommitInfo{
 		{"abc1234", "Add user model", ""},
 		{"def5678", "Add user model", ""}, // Same message = same slug
 	}
@@ -383,7 +444,7 @@ func TestMatchCommitsToPositions_SlugCollision(t *testing.T) {
 
 func TestMatchCommitsToPositions_GapInPositions(t *testing.T) {
 	// Existing branches have a gap (position 2 was merged/deleted)
-	commits := []struct{ Hash, Subject, Body string }{
+	commits := []CommitInfo{
 		{"abc1234", "Add user model", ""},
 		{"def5678", "Add user tests", ""},
 	}

@@ -12,8 +12,9 @@ import (
 func TestMergeCommand(t *testing.T) {
 	cmd := mergeCmd
 
-	if cmd.Use != "merge <position>" {
-		t.Errorf("expected Use 'merge <position>', got %s", cmd.Use)
+	expectedUse := "merge <position> or <start-end>"
+	if cmd.Use != expectedUse {
+		t.Errorf("expected Use %q, got %s", expectedUse, cmd.Use)
 	}
 
 	// Verify the command takes exactly 1 argument
@@ -298,8 +299,8 @@ func TestRunMerge_NonNumericArg(t *testing.T) {
 		t.Fatal("expected error for non-numeric argument")
 	}
 
-	if !containsSubstring(err.Error(), "invalid PR number") {
-		t.Errorf("expected error containing 'invalid PR number', got %q", err.Error())
+	if !containsSubstring(err.Error(), "invalid position") {
+		t.Errorf("expected error containing 'invalid position', got %q", err.Error())
 	}
 }
 
@@ -307,13 +308,6 @@ func TestRunMerge_NonNumericArg(t *testing.T) {
 func TestRunMerge_PRNumberZero(t *testing.T) {
 	mockGit := git.NewMockGit()
 	mockGit.CurrentBranch = "feature/auth"
-	mockGit.BaseBranch = "main"
-	mockGit.Commits = []git.Commit{
-		{Hash: "abc1234", Subject: "Add user model"},
-	}
-	mockGit.RemoteBranches = []string{
-		"stack/feature/auth/01-add-user-model",
-	}
 
 	oldNewGit := mergeNewGit
 	defer func() { mergeNewGit = oldNewGit }()
@@ -324,9 +318,9 @@ func TestRunMerge_PRNumberZero(t *testing.T) {
 		t.Fatal("expected error for PR number 0")
 	}
 
-	// Position 0 doesn't exist, must merge position 1 first
-	if !containsSubstring(err.Error(), "position 1 must be merged first") {
-		t.Errorf("expected error about merging position 1 first, got %q", err.Error())
+	// Position 0 is invalid (must be positive)
+	if !containsSubstring(err.Error(), "position must be positive") {
+		t.Errorf("expected error about position must be positive, got %q", err.Error())
 	}
 }
 
@@ -929,5 +923,165 @@ func TestRunMerge_AlreadyMergedPR(t *testing.T) {
 	}
 	if !containsSubstring(err.Error(), "rebase") {
 		t.Errorf("expected error to mention rebase as fix, got %q", err.Error())
+	}
+}
+
+// TestParsePositionRange tests parsing of position range arguments
+func TestParsePositionRange(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       string
+		expected    []int
+		expectError bool
+		errorSubstr string
+	}{
+		{"single position", "5", []int{5}, false, ""},
+		{"range 1-3", "1-3", []int{1, 2, 3}, false, ""},
+		{"range 4-6", "4-6", []int{4, 5, 6}, false, ""},
+		{"single element range", "3-3", []int{3}, false, ""},
+		{"invalid format", "1-2-3", nil, true, "invalid range format"},
+		{"start > end", "5-3", nil, true, "start 5 > end 3"},
+		{"non-numeric start", "a-3", nil, true, "invalid start position"},
+		{"non-numeric end", "1-b", nil, true, "invalid end position"},
+		{"non-numeric single", "abc", nil, true, "invalid position"},
+		{"zero position", "0", nil, true, "position must be positive"},
+		{"negative start", "-1-3", nil, true, "invalid range format"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := parsePositionRange(tt.input)
+			if tt.expectError {
+				if err == nil {
+					t.Errorf("expected error containing %q, got nil", tt.errorSubstr)
+				} else if !containsSubstring(err.Error(), tt.errorSubstr) {
+					t.Errorf("expected error containing %q, got %q", tt.errorSubstr, err.Error())
+				}
+			} else {
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+				if len(result) != len(tt.expected) {
+					t.Errorf("expected %v, got %v", tt.expected, result)
+				}
+				for i := range result {
+					if result[i] != tt.expected[i] {
+						t.Errorf("position %d: expected %d, got %d", i, tt.expected[i], result[i])
+					}
+				}
+			}
+		})
+	}
+}
+
+// TestRunMerge_RangeMerge tests merging multiple PRs at once
+func TestRunMerge_RangeMerge(t *testing.T) {
+	mockGit := git.NewMockGit()
+	mockGit.CurrentBranch = "feature/auth"
+	mockGit.BaseBranch = "main"
+	mockGit.Commits = []git.Commit{
+		{Hash: "abc1234", Subject: "Add user model"},
+		{Hash: "def5678", Subject: "Add user API"},
+		{Hash: "ghi9012", Subject: "Add user tests"},
+		{Hash: "jkl3456", Subject: "Add user docs"},
+	}
+	mockGit.RemoteBranches = []string{
+		"stack/feature/auth/01-add-user-model",
+		"stack/feature/auth/02-add-user-api",
+		"stack/feature/auth/03-add-user-tests",
+		"stack/feature/auth/04-add-user-docs",
+	}
+
+	mockGH := github.NewMockGitHub()
+	mockGH.AddExistingPR("stack/feature/auth/01-add-user-model", 100, "Add user model")
+	mockGH.AddExistingPR("stack/feature/auth/02-add-user-api", 101, "Add user API")
+	mockGH.AddExistingPR("stack/feature/auth/03-add-user-tests", 102, "Add user tests")
+	mockGH.AddExistingPR("stack/feature/auth/04-add-user-docs", 103, "Add user docs")
+
+	oldNewGit := mergeNewGit
+	oldNewGitHub := mergeNewGitHub
+	oldNoRebase := mergeNoRebase
+	defer func() {
+		mergeNewGit = oldNewGit
+		mergeNewGitHub = oldNewGitHub
+		mergeNoRebase = oldNoRebase
+	}()
+	mergeNewGit = func() git.GitOperations { return mockGit }
+	mergeNewGitHub = func() (github.GitHubOperations, error) { return mockGH, nil }
+	mergeNoRebase = false
+
+	// Merge positions 1-3
+	err := runMerge(nil, []string{"1-3"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify PRs 100, 101, 102 were merged
+	if len(mockGH.MergedPRs) != 3 {
+		t.Errorf("expected 3 PRs merged, got %d: %v", len(mockGH.MergedPRs), mockGH.MergedPRs)
+	}
+	expectedMerged := []int{100, 101, 102}
+	for i, expected := range expectedMerged {
+		if i >= len(mockGH.MergedPRs) || mockGH.MergedPRs[i] != expected {
+			t.Errorf("expected PR #%d merged at position %d", expected, i)
+		}
+	}
+
+	// Verify PR #103 was retargeted to main (it's now the first remaining)
+	foundRetarget := false
+	for _, call := range mockGH.Calls {
+		if call.Method == "UpdatePullRequestBase" {
+			if len(call.Args) >= 2 {
+				number, _ := call.Args[0].(int)
+				base, _ := call.Args[1].(string)
+				if number == 103 && base == "main" {
+					foundRetarget = true
+				}
+			}
+		}
+	}
+	if !foundRetarget {
+		t.Error("expected PR #103 to be retargeted to main")
+	}
+}
+
+// TestRunMerge_RangeMustStartAtFirst tests that range must start at first position
+func TestRunMerge_RangeMustStartAtFirst(t *testing.T) {
+	mockGit := git.NewMockGit()
+	mockGit.CurrentBranch = "feature/auth"
+	mockGit.BaseBranch = "main"
+	mockGit.Commits = []git.Commit{
+		{Hash: "abc1234", Subject: "Add user model"},
+		{Hash: "def5678", Subject: "Add user API"},
+		{Hash: "ghi9012", Subject: "Add user tests"},
+	}
+	mockGit.RemoteBranches = []string{
+		"stack/feature/auth/01-add-user-model",
+		"stack/feature/auth/02-add-user-api",
+		"stack/feature/auth/03-add-user-tests",
+	}
+
+	mockGH := github.NewMockGitHub()
+	mockGH.AddExistingPR("stack/feature/auth/01-add-user-model", 100, "Add user model")
+	mockGH.AddExistingPR("stack/feature/auth/02-add-user-api", 101, "Add user API")
+	mockGH.AddExistingPR("stack/feature/auth/03-add-user-tests", 102, "Add user tests")
+
+	oldNewGit := mergeNewGit
+	oldNewGitHub := mergeNewGitHub
+	defer func() {
+		mergeNewGit = oldNewGit
+		mergeNewGitHub = oldNewGitHub
+	}()
+	mergeNewGit = func() git.GitOperations { return mockGit }
+	mergeNewGitHub = func() (github.GitHubOperations, error) { return mockGH, nil }
+
+	// Try to merge 2-3 without merging 1 first
+	err := runMerge(nil, []string{"2-3"})
+	if err == nil {
+		t.Fatal("expected error when not starting from first position")
+	}
+
+	if !containsSubstring(err.Error(), "position 1 must be merged first") {
+		t.Errorf("expected error about merging position 1 first, got %q", err.Error())
 	}
 }

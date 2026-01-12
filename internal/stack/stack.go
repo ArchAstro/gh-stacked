@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/calvin/gh-stacked/internal/git"
 )
 
 var nonAlphaNum = regexp.MustCompile(`[^a-z0-9]+`)
@@ -209,6 +211,22 @@ func StripStackFooter(body string) string {
 	return body
 }
 
+// CommitInfo is the minimal commit data needed for position matching
+type CommitInfo struct {
+	Hash    string
+	Subject string
+	Body    string
+}
+
+// GitCommitsToInfos converts git.Commit slice to CommitInfo slice
+func GitCommitsToInfos(commits []git.Commit) []CommitInfo {
+	result := make([]CommitInfo, len(commits))
+	for i, c := range commits {
+		result[i] = CommitInfo{Hash: c.Hash, Subject: c.Subject, Body: c.Body}
+	}
+	return result
+}
+
 // CommitPosition represents a commit matched to its stack position
 type CommitPosition struct {
 	CommitHash string
@@ -221,7 +239,7 @@ type CommitPosition struct {
 
 // MatchCommitsToPositions matches commits to their stack positions using remote branches as source of truth
 // Returns positions in the same order as the input commits
-func MatchCommitsToPositions(commits []struct{ Hash, Subject, Body string }, existingBranches []ExistingBranchInfo, parentBranch string) []CommitPosition {
+func MatchCommitsToPositions(commits []CommitInfo, existingBranches []ExistingBranchInfo, parentBranch string) []CommitPosition {
 	result := make([]CommitPosition, 0, len(commits))
 
 	claimedBranches := make(map[int]bool)

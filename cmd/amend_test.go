@@ -127,7 +127,11 @@ func TestRunAmend_FirstPR(t *testing.T) {
 func TestRunAmend_NoStagedChanges(t *testing.T) {
 	mockGit := git.NewMockGit()
 	mockGit.CurrentBranch = "feature/auth"
+	mockGit.BaseBranch = "main"
 	mockGit.StagedChanges = false
+	mockGit.Commits = []git.Commit{
+		{Hash: "abc1234", Subject: "Add user model"},
+	}
 
 	oldNewGit := amendNewGit
 	defer func() { amendNewGit = oldNewGit }()
@@ -163,8 +167,8 @@ func TestRunAmend_InvalidPRNumber(t *testing.T) {
 		t.Fatal("expected error for invalid PR number")
 	}
 
-	// Should indicate PR not found
-	expectedSubstring := "PR 5 not found"
+	// Should indicate PR position not found
+	expectedSubstring := "PR position 5 not found"
 	if err.Error() == "" {
 		t.Error("expected non-empty error message")
 	}
@@ -259,12 +263,12 @@ func TestRunAmend_RebaseConflict(t *testing.T) {
 		t.Error("expected AbortRebase to be called on conflict")
 	}
 
-	// Should have called GetOriginalHead to restore state
-	if !mockGit.WasCalled("GetOriginalHead") {
-		t.Error("expected GetOriginalHead to be called for recovery")
+	// Should have called Run to save HEAD before fixup (rev-parse HEAD)
+	if !mockGit.WasCalled("Run") {
+		t.Error("expected Run to be called to save original HEAD")
 	}
 
-	// Should have called ResetHard to restore original state
+	// Should have called ResetHard to restore original state (before fixup commit)
 	if !mockGit.WasCalled("ResetHard") {
 		t.Error("expected ResetHard to be called to restore state")
 	}
@@ -417,6 +421,66 @@ func TestRunAmend_PushFails(t *testing.T) {
 
 	if !containsSubstring(err.Error(), "push") {
 		t.Errorf("expected error about push, got %q", err.Error())
+	}
+}
+
+// TestRunAmend_UsesExistingFixup tests that amend uses an existing fixup commit at the top
+func TestRunAmend_UsesExistingFixup(t *testing.T) {
+	mockGit := git.NewMockGit()
+	mockGit.CurrentBranch = "feature/auth"
+	mockGit.BaseBranch = "main"
+	mockGit.StagedChanges = false // No staged changes - should still work with existing fixup
+	mockGit.Commits = []git.Commit{
+		{Hash: "abc1234", Subject: "Add user model"},
+		{Hash: "def5678", Subject: "Add user API"},
+		{Hash: "fixup123", Subject: "fixup! Add user model"}, // Existing fixup at top
+	}
+
+	oldNewGit := amendNewGit
+	defer func() { amendNewGit = oldNewGit }()
+	amendNewGit = func() git.GitOperations { return mockGit }
+
+	err := runAmend(nil, []string{"1"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should NOT have called CreateFixupCommit (uses existing)
+	if mockGit.WasCalled("CreateFixupCommit") {
+		t.Error("should not create new fixup when one already exists")
+	}
+
+	// Should have called AutosquashRebase
+	if !mockGit.WasCalled("AutosquashRebase") {
+		t.Error("expected AutosquashRebase to be called")
+	}
+}
+
+// TestRunAmend_ExistingFixupWrongTarget tests that wrong fixup doesn't match
+func TestRunAmend_ExistingFixupWrongTarget(t *testing.T) {
+	mockGit := git.NewMockGit()
+	mockGit.CurrentBranch = "feature/auth"
+	mockGit.BaseBranch = "main"
+	mockGit.StagedChanges = false // No staged changes
+	mockGit.Commits = []git.Commit{
+		{Hash: "abc1234", Subject: "Add user model"},
+		{Hash: "def5678", Subject: "Add user API"},
+		{Hash: "fixup123", Subject: "fixup! Add user API"}, // Fixup for commit 2, not 1
+	}
+
+	oldNewGit := amendNewGit
+	defer func() { amendNewGit = oldNewGit }()
+	amendNewGit = func() git.GitOperations { return mockGit }
+
+	// Try to amend commit 1, but fixup is for commit 2
+	err := runAmend(nil, []string{"1"})
+	if err == nil {
+		t.Fatal("expected error when no staged changes and fixup is for wrong target")
+	}
+
+	expectedError := "no staged changes. Stage files first with `git add`"
+	if err.Error() != expectedError {
+		t.Errorf("expected error %q, got %q", expectedError, err.Error())
 	}
 }
 
