@@ -141,3 +141,25 @@ func (g *Git) ResetHard(ref string) error {
 func (g *Git) Run(args ...string) (string, error) {
 	return g.run(args...)
 }
+
+func (g *Git) ListRemoteBranches(pattern string) ([]string, error) {
+	// List remote branches matching pattern (e.g., "origin/stack/feature/*")
+	out, err := g.run("branch", "-r", "--list", pattern)
+	if err != nil {
+		return nil, err
+	}
+	if out == "" {
+		return nil, nil
+	}
+
+	var branches []string
+	for _, line := range strings.Split(out, "\n") {
+		branch := strings.TrimSpace(line)
+		if branch != "" {
+			// Remove "origin/" prefix if present
+			branch = strings.TrimPrefix(branch, "origin/")
+			branches = append(branches, branch)
+		}
+	}
+	return branches, nil
+}

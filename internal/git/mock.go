@@ -7,10 +7,11 @@ var _ GitOperations = (*MockGit)(nil)
 // MockGit is a test double for GitOperations
 type MockGit struct {
 	// State
-	CurrentBranch string
-	BaseBranch    string
-	Commits       []Commit
-	StagedChanges bool
+	CurrentBranch  string
+	BaseBranch     string
+	Commits        []Commit
+	StagedChanges  bool
+	RemoteBranches []string // For ListRemoteBranches
 
 	// Track calls for assertions
 	Calls []MockCall
@@ -124,6 +125,14 @@ func (m *MockGit) ResetHard(ref string) error {
 func (m *MockGit) Run(args ...string) (string, error) {
 	m.Calls = append(m.Calls, MockCall{Method: "Run", Args: []interface{}{args}})
 	return "", m.Errors["Run"]
+}
+
+func (m *MockGit) ListRemoteBranches(pattern string) ([]string, error) {
+	m.Calls = append(m.Calls, MockCall{Method: "ListRemoteBranches", Args: []interface{}{pattern}})
+	if err := m.Errors["ListRemoteBranches"]; err != nil {
+		return nil, err
+	}
+	return m.RemoteBranches, nil
 }
 
 // WasCalled checks if method was called

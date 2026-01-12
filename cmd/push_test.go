@@ -155,6 +155,8 @@ func TestRunPush_UpdatesExistingPRs(t *testing.T) {
 		{Hash: "abc1234", Subject: "Add user model"},
 		{Hash: "def5678", Subject: "Add user API"},
 	}
+	// Simulate existing remote branch for first commit
+	mockGit.RemoteBranches = []string{"stack/feature/auth/01-add-user-model"}
 
 	mockGH := github.NewMockGitHub()
 	// PR already exists for first commit - branch name follows the pattern from stack.StackBranchName
@@ -243,6 +245,8 @@ func TestRunPush_SquashValidation(t *testing.T) {
 		{Hash: "def5678", Subject: "Add user API"},
 		{Hash: "ghi9012", Subject: "Add user tests"},
 	}
+	// Simulate existing remote branch for second commit
+	mockGit.RemoteBranches = []string{"stack/feature/auth/02-add-user-api"}
 
 	mockGH := github.NewMockGitHub()
 	// PR exists for commit 2
@@ -401,6 +405,12 @@ func TestRunPush_MultipleExistingPRs(t *testing.T) {
 		{Hash: "def5678", Subject: "Add user API"},
 		{Hash: "ghi9012", Subject: "Add user tests"},
 	}
+	// Simulate all existing remote branches
+	mockGit.RemoteBranches = []string{
+		"stack/feature/auth/01-add-user-model",
+		"stack/feature/auth/02-add-user-api",
+		"stack/feature/auth/03-add-user-tests",
+	}
 
 	mockGH := github.NewMockGitHub()
 	// All PRs already exist
@@ -451,6 +461,8 @@ func TestRunPush_SkipsExistingPRsWithoutFlag(t *testing.T) {
 		{Hash: "abc1234", Subject: "Add user model"},
 		{Hash: "def5678", Subject: "Add user API"},
 	}
+	// Simulate existing remote branch for first commit only
+	mockGit.RemoteBranches = []string{"stack/feature/auth/01-add-user-model"}
 
 	mockGH := github.NewMockGitHub()
 	mockGH.AddExistingPR("stack/feature/auth/01-add-user-model", 100, "Add user model")
@@ -479,6 +491,354 @@ func TestRunPush_SkipsExistingPRsWithoutFlag(t *testing.T) {
 	}
 	if len(mockGH.UpdatedPRs) != 0 {
 		t.Errorf("expected 0 PRs updated without flag, got %d", len(mockGH.UpdatedPRs))
+	}
+}
+
+// TestRunPush_PreservesPositionsAfterMerge tests that after merging PR 1,
+// remaining commits keep their original positions (2, 3, 4) not renumbered (1, 2, 3)
+func TestRunPush_PreservesPositionsAfterMerge(t *testing.T) {
+	mockGit := git.NewMockGit()
+	mockGit.CurrentBranch = "feature/auth"
+	mockGit.BaseBranch = "main"
+	// After merging PR 1, we have 3 remaining commits (originally positions 2, 3, 4)
+	mockGit.Commits = []git.Commit{
+		{Hash: "def5678", Subject: "Add user API"},      // was position 2
+		{Hash: "ghi9012", Subject: "Add user tests"},    // was position 3
+		{Hash: "jkl3456", Subject: "Add user docs"},     // was position 4
+	}
+	// Remote branches exist at their ORIGINAL positions (02, 03, 04)
+	mockGit.RemoteBranches = []string{
+		"stack/feature/auth/02-add-user-api",
+		"stack/feature/auth/03-add-user-tests",
+		"stack/feature/auth/04-add-user-docs",
+	}
+
+	mockGH := github.NewMockGitHub()
+	mockGH.AddExistingPR("stack/feature/auth/02-add-user-api", 101, "Add user API")
+	mockGH.AddExistingPR("stack/feature/auth/03-add-user-tests", 102, "Add user tests")
+	mockGH.AddExistingPR("stack/feature/auth/04-add-user-docs", 103, "Add user docs")
+
+	oldNewGit := newGit
+	oldNewGitHub := newGitHub
+	oldForceUpdate := pushForceUpdateMetadata
+	defer func() {
+		newGit = oldNewGit
+		newGitHub = oldNewGitHub
+		pushForceUpdateMetadata = oldForceUpdate
+	}()
+	newGit = func() git.GitOperations { return mockGit }
+	newGitHub = func() (github.GitHubOperations, error) { return mockGH, nil }
+	pushForceUpdateMetadata = true
+
+	err := runPush(nil, []string{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should NOT create any new PRs (all exist at original positions)
+	if len(mockGH.CreatedPRs) != 0 {
+		t.Errorf("expected 0 PRs created (positions preserved), got %d", len(mockGH.CreatedPRs))
+	}
+
+	// Should update all 3 existing PRs
+	if len(mockGH.UpdatedPRs) != 3 {
+		t.Errorf("expected 3 PRs updated, got %d", len(mockGH.UpdatedPRs))
+	}
+
+	// Verify the correct PR numbers were updated (101, 102, 103 - not 100, 101, 102)
+	expectedNumbers := map[int]bool{101: true, 102: true, 103: true}
+	for _, updated := range mockGH.UpdatedPRs {
+		if !expectedNumbers[updated.Number] {
+			t.Errorf("unexpected PR number updated: %d (positions were renumbered!)", updated.Number)
+		}
+	}
+
+	// Verify branches used were the ORIGINAL positions (02, 03, 04), not renumbered (01, 02, 03)
+	for _, call := range mockGit.Calls {
+		if call.Method == "CreateBranchAtCommit" {
+			branchName := call.Args[0].(string)
+			// Should NOT contain "01-" since we preserved positions
+			if branchName == "stack/feature/auth/01-add-user-api" {
+				t.Error("branch was renumbered to position 01 - should have stayed at 02!")
+			}
+		}
+	}
+}
+
+// TestRunPush_NewCommitGetsNextPosition tests that a new commit after existing stack
+// gets the next available position number, not position 1
+func TestRunPush_NewCommitGetsNextPosition(t *testing.T) {
+	mockGit := git.NewMockGit()
+	mockGit.CurrentBranch = "feature/auth"
+	mockGit.BaseBranch = "main"
+	// 2 existing commits + 1 new commit
+	mockGit.Commits = []git.Commit{
+		{Hash: "abc1234", Subject: "Add user model"},    // existing at position 1
+		{Hash: "def5678", Subject: "Add user API"},      // existing at position 2
+		{Hash: "ghi9012", Subject: "Add user tests"},    // NEW commit - should get position 3
+	}
+	// Only first 2 commits have existing remote branches
+	mockGit.RemoteBranches = []string{
+		"stack/feature/auth/01-add-user-model",
+		"stack/feature/auth/02-add-user-api",
+	}
+
+	mockGH := github.NewMockGitHub()
+	mockGH.AddExistingPR("stack/feature/auth/01-add-user-model", 100, "Add user model")
+	mockGH.AddExistingPR("stack/feature/auth/02-add-user-api", 101, "Add user API")
+
+	oldNewGit := newGit
+	oldNewGitHub := newGitHub
+	defer func() {
+		newGit = oldNewGit
+		newGitHub = oldNewGitHub
+	}()
+	newGit = func() git.GitOperations { return mockGit }
+	newGitHub = func() (github.GitHubOperations, error) { return mockGH, nil }
+
+	err := runPush(nil, []string{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should create exactly 1 new PR for the new commit
+	if len(mockGH.CreatedPRs) != 1 {
+		t.Errorf("expected 1 PR created, got %d", len(mockGH.CreatedPRs))
+	}
+
+	// The new PR should use position 03 (next after max existing)
+	if len(mockGH.CreatedPRs) > 0 {
+		expectedBranch := "stack/feature/auth/03-add-user-tests"
+		if mockGH.CreatedPRs[0].Head != expectedBranch {
+			t.Errorf("new commit should get position 03, got branch: %s", mockGH.CreatedPRs[0].Head)
+		}
+	}
+}
+
+// TestRunPush_SlugCollision tests that multiple commits with same slug get different positions
+func TestRunPush_SlugCollision(t *testing.T) {
+	mockGit := git.NewMockGit()
+	mockGit.CurrentBranch = "feature/auth"
+	mockGit.BaseBranch = "main"
+	// Two commits with similar first 5 words (same slug)
+	mockGit.Commits = []git.Commit{
+		{Hash: "abc1234", Subject: "Add user properties table"},      // slug: add-user-properties-table
+		{Hash: "def5678", Subject: "Add user properties endpoints"},  // slug: add-user-properties-endpoints (different!)
+	}
+	// No existing branches
+
+	mockGH := github.NewMockGitHub()
+
+	oldNewGit := newGit
+	oldNewGitHub := newGitHub
+	defer func() {
+		newGit = oldNewGit
+		newGitHub = oldNewGitHub
+	}()
+	newGit = func() git.GitOperations { return mockGit }
+	newGitHub = func() (github.GitHubOperations, error) { return mockGH, nil }
+
+	err := runPush(nil, []string{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should create 2 PRs with different positions
+	if len(mockGH.CreatedPRs) != 2 {
+		t.Errorf("expected 2 PRs created, got %d", len(mockGH.CreatedPRs))
+	}
+
+	// Verify different branch names (different positions)
+	if len(mockGH.CreatedPRs) >= 2 {
+		if mockGH.CreatedPRs[0].Head == mockGH.CreatedPRs[1].Head {
+			t.Errorf("both PRs have same branch: %s (slug collision not handled)", mockGH.CreatedPRs[0].Head)
+		}
+	}
+}
+
+// TestRunPush_SlugCollisionWithExisting tests that slug collision doesn't double-claim branches
+// Scenario: Two commits with SAME slug, two existing branches with SAME slug
+// First commit should claim first branch, second commit should claim second branch
+func TestRunPush_SlugCollisionWithExisting(t *testing.T) {
+	mockGit := git.NewMockGit()
+	mockGit.CurrentBranch = "feature/auth"
+	mockGit.BaseBranch = "main"
+	// Two commits with SAME slug (first 5 words identical, slug matches branch)
+	mockGit.Commits = []git.Commit{
+		{Hash: "abc1234", Subject: "feat add user model"},     // slug: feat-add-user-model
+		{Hash: "def5678", Subject: "feat add user model"},     // slug: feat-add-user-model (SAME!)
+		{Hash: "ghi9012", Subject: "feat add user API here"},  // slug: feat-add-user-api-here
+	}
+	// Existing branches - two have the SAME slug
+	mockGit.RemoteBranches = []string{
+		"stack/feature/auth/01-feat-add-user-model",     // slug: feat-add-user-model
+		"stack/feature/auth/02-feat-add-user-model",     // slug: feat-add-user-model (SAME!)
+		"stack/feature/auth/03-feat-add-user-api-here",  // slug: feat-add-user-api-here
+	}
+
+	mockGH := github.NewMockGitHub()
+	mockGH.AddExistingPR("stack/feature/auth/01-feat-add-user-model", 100, "feat add user model")
+	mockGH.AddExistingPR("stack/feature/auth/02-feat-add-user-model", 101, "feat add user model")
+	mockGH.AddExistingPR("stack/feature/auth/03-feat-add-user-api-here", 102, "feat add user API here")
+
+	oldNewGit := newGit
+	oldNewGitHub := newGitHub
+	oldForceUpdate := pushForceUpdateMetadata
+	defer func() {
+		newGit = oldNewGit
+		newGitHub = oldNewGitHub
+		pushForceUpdateMetadata = oldForceUpdate
+	}()
+	newGit = func() git.GitOperations { return mockGit }
+	newGitHub = func() (github.GitHubOperations, error) { return mockGH, nil }
+	pushForceUpdateMetadata = true
+
+	err := runPush(nil, []string{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should NOT create any new PRs - all should match existing branches
+	// Commit 1 claims branch 01 (first match)
+	// Commit 2 claims branch 02 (branch 01 already claimed, so takes next match)
+	// Commit 3 claims branch 03
+	if len(mockGH.CreatedPRs) != 0 {
+		t.Errorf("expected 0 PRs created, got %d", len(mockGH.CreatedPRs))
+	}
+
+	// Should update 3 different PRs (100, 101, 102)
+	if len(mockGH.UpdatedPRs) != 3 {
+		t.Errorf("expected 3 PRs updated, got %d", len(mockGH.UpdatedPRs))
+	}
+
+	// Verify no duplicate PR numbers (would indicate double-claiming)
+	seenPRs := make(map[int]bool)
+	for _, updated := range mockGH.UpdatedPRs {
+		if seenPRs[updated.Number] {
+			t.Errorf("PR #%d was updated twice (branch double-claimed)", updated.Number)
+		}
+		seenPRs[updated.Number] = true
+	}
+}
+
+// TestRunPush_DuplicateBranchesAtSamePosition tests handling of orphaned duplicate branches
+// Scenario: Multiple branches exist at same position (e.g., 02-foo and 02-bar from failed attempts)
+// Tool should match commits correctly and not get confused by duplicates
+func TestRunPush_DuplicateBranchesAtSamePosition(t *testing.T) {
+	mockGit := git.NewMockGit()
+	mockGit.CurrentBranch = "feature/auth"
+	mockGit.BaseBranch = "main"
+	mockGit.Commits = []git.Commit{
+		{Hash: "abc1234", Subject: "Add user model"},
+		{Hash: "def5678", Subject: "Add user API"},
+	}
+	// Duplicate branches at position 01 and 02 (orphaned from failed attempts)
+	mockGit.RemoteBranches = []string{
+		"stack/feature/auth/01-add-user-model",      // matches commit 1
+		"stack/feature/auth/01-old-orphaned-branch", // orphaned duplicate at position 01
+		"stack/feature/auth/02-add-user-api",        // matches commit 2
+		"stack/feature/auth/02-another-orphan",      // orphaned duplicate at position 02
+	}
+
+	mockGH := github.NewMockGitHub()
+	mockGH.AddExistingPR("stack/feature/auth/01-add-user-model", 100, "Add user model")
+	mockGH.AddExistingPR("stack/feature/auth/02-add-user-api", 101, "Add user API")
+	// Orphaned branches have no PRs
+
+	oldNewGit := newGit
+	oldNewGitHub := newGitHub
+	oldForceUpdate := pushForceUpdateMetadata
+	defer func() {
+		newGit = oldNewGit
+		newGitHub = oldNewGitHub
+		pushForceUpdateMetadata = oldForceUpdate
+	}()
+	newGit = func() git.GitOperations { return mockGit }
+	newGitHub = func() (github.GitHubOperations, error) { return mockGH, nil }
+	pushForceUpdateMetadata = true
+
+	err := runPush(nil, []string{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should update the 2 PRs that match, NOT create new ones
+	if len(mockGH.CreatedPRs) != 0 {
+		t.Errorf("expected 0 PRs created (should match existing), got %d", len(mockGH.CreatedPRs))
+	}
+	if len(mockGH.UpdatedPRs) != 2 {
+		t.Errorf("expected 2 PRs updated, got %d", len(mockGH.UpdatedPRs))
+	}
+}
+
+// TestRunPush_NeverCreatesAtExistingPosition ensures new branches never reuse existing positions
+// This is the critical test to prevent the renumbering bug that caused duplicate PRs
+func TestRunPush_NeverCreatesAtExistingPosition(t *testing.T) {
+	mockGit := git.NewMockGit()
+	mockGit.CurrentBranch = "feature/auth"
+	mockGit.BaseBranch = "main"
+	// 3 commits, but only 2 have existing branches (at positions 02 and 03)
+	// This simulates the state after merging PR 1
+	mockGit.Commits = []git.Commit{
+		{Hash: "def5678", Subject: "Add user API"},           // existing at position 02
+		{Hash: "ghi9012", Subject: "Add user tests"},         // existing at position 03
+		{Hash: "jkl3456", Subject: "Add new feature"},        // NEW - must NOT get position 01, 02, or 03
+	}
+	// Existing branches at positions 02 and 03 (position 01 was merged and deleted)
+	mockGit.RemoteBranches = []string{
+		"stack/feature/auth/02-add-user-api",
+		"stack/feature/auth/03-add-user-tests",
+	}
+
+	mockGH := github.NewMockGitHub()
+	mockGH.AddExistingPR("stack/feature/auth/02-add-user-api", 101, "Add user API")
+	mockGH.AddExistingPR("stack/feature/auth/03-add-user-tests", 102, "Add user tests")
+
+	var createdBranches []string
+	oldNewGit := newGit
+	oldNewGitHub := newGitHub
+	defer func() {
+		newGit = oldNewGit
+		newGitHub = oldNewGitHub
+	}()
+
+	// Track which branches are created
+	mockGit.OnCreateBranch = func(name, hash string) error {
+		createdBranches = append(createdBranches, name)
+		return nil
+	}
+
+	newGit = func() git.GitOperations { return mockGit }
+	newGitHub = func() (github.GitHubOperations, error) { return mockGH, nil }
+
+	err := runPush(nil, []string{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// New commit should get position 04, NOT 01
+	if len(mockGH.CreatedPRs) != 1 {
+		t.Fatalf("expected 1 PR created, got %d", len(mockGH.CreatedPRs))
+	}
+
+	newBranch := mockGH.CreatedPRs[0].Head
+
+	// Must NOT be position 01, 02, or 03
+	forbiddenPrefixes := []string{
+		"stack/feature/auth/01-",
+		"stack/feature/auth/02-",
+		"stack/feature/auth/03-",
+	}
+	for _, prefix := range forbiddenPrefixes {
+		if len(newBranch) >= len(prefix) && newBranch[:len(prefix)] == prefix {
+			t.Errorf("new branch %s reuses existing position! This causes duplicate PRs", newBranch)
+		}
+	}
+
+	// Should be position 04
+	expectedPrefix := "stack/feature/auth/04-"
+	if len(newBranch) < len(expectedPrefix) || newBranch[:len(expectedPrefix)] != expectedPrefix {
+		t.Errorf("expected new branch at position 04, got: %s", newBranch)
 	}
 }
 

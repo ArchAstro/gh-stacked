@@ -84,6 +84,76 @@ func parseSquashRange(s string) (start, end int, err error) {
 	return start, end, nil
 }
 
+// existingBranchInfo holds info about an existing remote stack branch
+type existingBranchInfo struct {
+	branch   string
+	position int
+	slug     string
+}
+
+// parseExistingBranches parses remote branches to extract position and slug
+func parseExistingBranches(branches []string, parentBranch string) []existingBranchInfo {
+	var result []existingBranchInfo
+	prefix := "stack/" + parentBranch + "/"
+
+	// Pattern: stack/{parent}/{NN}-{slug}
+	re := regexp.MustCompile(`^stack/.+/(\d{2})-(.+)$`)
+
+	for _, branch := range branches {
+		if !strings.HasPrefix(branch, prefix) {
+			continue
+		}
+		matches := re.FindStringSubmatch(branch)
+		if matches == nil {
+			continue
+		}
+		pos, _ := strconv.Atoi(matches[1])
+		result = append(result, existingBranchInfo{
+			branch:   branch,
+			position: pos,
+			slug:     matches[2],
+		})
+	}
+	return result
+}
+
+// matchCommitToExistingBranch finds existing branch for a commit by slug match
+func matchCommitToExistingBranch(commitMsg string, existing []existingBranchInfo) *existingBranchInfo {
+	slug := stack.Slugify(commitMsg, 5)
+	for i := range existing {
+		if existing[i].slug == slug {
+			return &existing[i]
+		}
+	}
+	return nil
+}
+
+// matchCommitToExistingBranchExcluding finds existing branch by slug, excluding claimed ones
+func matchCommitToExistingBranchExcluding(commitMsg string, existing []existingBranchInfo, claimed map[int]bool) *existingBranchInfo {
+	slug := stack.Slugify(commitMsg, 5)
+	for i := range existing {
+		// Skip branches that have already been claimed by previous commits
+		if claimed[existing[i].position] {
+			continue
+		}
+		if existing[i].slug == slug {
+			return &existing[i]
+		}
+	}
+	return nil
+}
+
+// findMaxPosition returns the highest position number from existing branches
+func findMaxPosition(existing []existingBranchInfo) int {
+	maxPos := 0
+	for _, e := range existing {
+		if e.position > maxPos {
+			maxPos = e.position
+		}
+	}
+	return maxPos
+}
+
 func runPush(cmd *cobra.Command, args []string) error {
 	g := newGit()
 
@@ -145,15 +215,65 @@ func runPush(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to create GitHub client: %w", err)
 	}
 
-	// Check for existing PRs (to validate squash)
-	existingPRs := make(map[int]int) // position -> PR number
-	for i, commit := range commits {
-		position := i + 1
-		branchName := stack.StackBranchName(currentBranch, position, commit.Subject)
-		prs, err := gh.ListPullRequests(branchName)
-		if err == nil && len(prs) > 0 {
-			existingPRs[position] = prs[0].Number
+	// Fetch existing remote branches for this stack
+	// This is the SOURCE OF TRUTH for position numbers
+	remoteBranches, err := g.ListRemoteBranches("origin/stack/" + currentBranch + "/*")
+	if err != nil {
+		// Non-fatal - might be first push
+		remoteBranches = nil
+	}
+	existingBranches := parseExistingBranches(remoteBranches, currentBranch)
+
+	// Build entries by matching commits to existing branches
+	// Key insight: use slug matching, not position, to find existing branches
+	// Track claimed branches to prevent multiple commits matching the same branch
+	var entries []stack.PREntry
+	existingPRs := make(map[int]int)    // position -> PR number (for squash validation)
+	claimedBranches := make(map[int]bool) // track which existing branches have been claimed
+	nextPosition := findMaxPosition(existingBranches) + 1
+	if nextPosition == 1 {
+		nextPosition = 1 // Start at 1 if no existing branches
+	}
+
+	for _, commit := range commits {
+		var entry stack.PREntry
+
+		// Check if this commit already has an existing branch (by slug match)
+		// Only match if the branch hasn't been claimed by a previous commit
+		existing := matchCommitToExistingBranchExcluding(commit.Subject, existingBranches, claimedBranches)
+		if existing != nil {
+			// Mark this branch as claimed so it can't be matched again
+			claimedBranches[existing.position] = true
+
+			// Use existing branch's position and name
+			entry = stack.PREntry{
+				Position:   existing.position,
+				CommitHash: commit.Hash,
+				CommitMsg:  commit.Subject,
+				CommitBody: commit.Body,
+				Branch:     existing.branch,
+			}
+
+			// Look up PR for this branch
+			prs, err := gh.ListPullRequests(existing.branch)
+			if err == nil && len(prs) > 0 {
+				entry.PRNumber = prs[0].Number
+				existingPRs[existing.position] = prs[0].Number
+			}
+		} else {
+			// New commit - assign next available position
+			branchName := stack.StackBranchName(currentBranch, nextPosition, commit.Subject)
+			entry = stack.PREntry{
+				Position:   nextPosition,
+				CommitHash: commit.Hash,
+				CommitMsg:  commit.Subject,
+				CommitBody: commit.Body,
+				Branch:     branchName,
+			}
+			nextPosition++
 		}
+
+		entries = append(entries, entry)
 	}
 
 	// Validate squash ranges don't include existing PRs
@@ -167,27 +287,6 @@ func runPush(cmd *cobra.Command, args []string) error {
 				return fmt.Errorf("cannot squash commit %d - it already has PR #%d\nTo combine these, close the PRs manually first, then re-push", pos, prNum)
 			}
 		}
-	}
-
-	// Build preview
-	var entries []stack.PREntry
-	for i, commit := range commits {
-		position := i + 1
-		branchName := stack.StackBranchName(currentBranch, position, commit.Subject)
-
-		entry := stack.PREntry{
-			Position:   position,
-			CommitHash: commit.Hash,
-			CommitMsg:  commit.Subject,
-			CommitBody: commit.Body,
-			Branch:     branchName,
-		}
-
-		if prNum, exists := existingPRs[position]; exists {
-			entry.PRNumber = prNum
-		}
-
-		entries = append(entries, entry)
 	}
 
 	if pushPreview {
@@ -250,7 +349,8 @@ func runPush(cmd *cobra.Command, args []string) error {
 		prTitle := stack.GeneratePRTitle(entry.CommitMsg, entry.Position, total)
 
 		if entry.PRNumber > 0 {
-			// Update existing PR (only if --force-update-pr-metadata is set)
+			// Existing PR - branch was already pushed above
+			// Only update PR title/body if --force-update-pr-metadata is set
 			if pushForceUpdateMetadata {
 				prBody := stack.GeneratePRBody(entry.CommitMsg, entry.CommitBody, currentBranch, entries, entry.Position)
 				err = gh.UpdatePullRequest(entry.PRNumber, prTitle, prBody)
@@ -260,11 +360,13 @@ func runPush(cmd *cobra.Command, args []string) error {
 				output.PRsUpdated = append(output.PRsUpdated, entry.PRNumber)
 
 				if !jsonOutput {
-					fmt.Printf("Updated PR #%d: %s\n", entry.PRNumber, entry.CommitMsg)
+					fmt.Printf("Pushed PR #%d: %s (metadata updated)\n", entry.PRNumber, entry.CommitMsg)
 				}
 			} else {
+				output.PRsUpdated = append(output.PRsUpdated, entry.PRNumber)
+
 				if !jsonOutput {
-					fmt.Printf("Skipped PR #%d (use --force-update-pr-metadata to update)\n", entry.PRNumber)
+					fmt.Printf("Pushed PR #%d: %s\n", entry.PRNumber, entry.CommitMsg)
 				}
 			}
 		} else {

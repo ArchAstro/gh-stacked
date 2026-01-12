@@ -16,6 +16,7 @@ type GitOperations interface {
 	GetOriginalHead() (string, error)
 	ResetHard(ref string) error
 	Run(args ...string) (string, error)
+	ListRemoteBranches(pattern string) ([]string, error)
 }
 
 // Verify Git implements GitOperations at compile time
