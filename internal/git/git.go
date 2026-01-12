@@ -23,8 +23,8 @@ func (g *Git) run(args ...string) (string, error) {
 }
 
 func (g *Git) GetBaseBranch() (string, error) {
-	// Try common base branches in order of preference
-	for _, base := range []string{"main", "master"} {
+	// Prefer remote tracking branches (more up-to-date) over local branches
+	for _, base := range []string{"origin/main", "origin/master", "main", "master"} {
 		_, err := g.run("rev-parse", "--verify", base)
 		if err == nil {
 			return base, nil

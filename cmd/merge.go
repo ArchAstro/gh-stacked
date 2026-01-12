@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/calvin/gh-stacked/internal/git"
 	"github.com/calvin/gh-stacked/internal/github"
@@ -119,7 +120,55 @@ Stack order:
 
 	prToMerge := prs[0]
 
-	// Merge the PR
+	// Pre-flight check: If we'll need to rebase, verify it won't conflict
+	// BEFORE making any irreversible changes (merge, retarget)
+	if len(commits) > 1 && !mergeNoRebase {
+		if !jsonOutput {
+			fmt.Println("Checking if rebase will succeed...")
+		}
+
+		// Fetch latest base
+		_, err = g.Run("fetch", "origin")
+		if err != nil {
+			return fmt.Errorf("failed to fetch origin: %w", err)
+		}
+
+		// Save current HEAD
+		originalHead, err := g.Run("rev-parse", "HEAD")
+		if err != nil {
+			return fmt.Errorf("failed to get current HEAD: %w", err)
+		}
+
+		// Try a test rebase (will be aborted either way)
+		// Use origin/baseBranch since that's what we'll rebase onto after merge
+		rebaseTarget := "origin/" + strings.TrimPrefix(baseBranch, "origin/")
+		_, testErr := g.Run("rebase", rebaseTarget)
+		if testErr != nil {
+			// Rebase failed - abort and tell user to fix first
+			g.AbortRebase()
+			// Reset to original state just in case
+			g.Run("reset", "--hard", originalHead)
+			return fmt.Errorf(`rebase onto %s will conflict - cannot merge safely
+
+Resolve the conflicts first:
+  git fetch origin
+  git rebase %s
+  # resolve conflicts
+  gh stacked push
+
+Then retry: gh stacked merge 1`, rebaseTarget, rebaseTarget)
+		}
+
+		// Test passed - abort it so we can do the real rebase after merge
+		g.AbortRebase()
+		g.Run("reset", "--hard", originalHead)
+
+		if !jsonOutput {
+			fmt.Println("Pre-flight check passed.")
+		}
+	}
+
+	// Now safe to merge
 	err = gh.MergePullRequest(prToMerge.Number)
 	if err != nil {
 		return fmt.Errorf("failed to merge PR #%d: %w", prToMerge.Number, err)
@@ -138,37 +187,40 @@ Stack order:
 
 	// If there are more commits, update them
 	if len(commits) > 1 && !mergeNoRebase {
-		// Retarget PR 2 to main
+		// Retarget PR 2 to base branch
 		secondBranch := stack.StackBranchName(currentBranch, 2, commits[1].Subject)
 		secondPRs, err := gh.ListPullRequests(secondBranch)
 		if err == nil && len(secondPRs) > 0 {
-			err = gh.UpdatePullRequestBase(secondPRs[0].Number, baseBranch)
+			targetBase := strings.TrimPrefix(baseBranch, "origin/")
+			err = gh.UpdatePullRequestBase(secondPRs[0].Number, targetBase)
 			if err != nil {
 				return fmt.Errorf("failed to retarget PR #%d: %w", secondPRs[0].Number, err)
 			}
 			output.Retargeted = append(output.Retargeted, secondPRs[0].Number)
 
 			if !jsonOutput {
-				fmt.Printf("Retargeted PR #%d to %s\n", secondPRs[0].Number, baseBranch)
+				fmt.Printf("Retargeted PR #%d to %s\n", secondPRs[0].Number, targetBase)
 			}
 		}
 
-		// Pull latest base and rebase
-		_, err = g.Run("fetch", "origin", baseBranch)
+		// Wait a moment for GitHub to process the merge, then fetch
+		_, err = g.Run("fetch", "origin")
 		if err != nil {
-			return fmt.Errorf("failed to fetch %s: %w", baseBranch, err)
+			return fmt.Errorf("failed to fetch origin: %w", err)
 		}
 
-		_, err = g.Run("rebase", "origin/"+baseBranch)
+		// Rebase onto the updated base (now includes our merged PR)
+		rebaseTarget := "origin/" + strings.TrimPrefix(baseBranch, "origin/")
+		_, err = g.Run("rebase", rebaseTarget)
 		if err != nil {
 			g.AbortRebase()
-			return fmt.Errorf(`conflict rebasing onto %s
-Restored original branch state.
+			return fmt.Errorf(`unexpected conflict rebasing onto %s
+This should not happen after pre-flight check passed.
 
 To resolve manually:
-  git fetch origin %s
-  git rebase origin/%s
-  gh stacked push`, baseBranch, baseBranch, baseBranch)
+  git fetch origin
+  git rebase %s
+  gh stacked push`, rebaseTarget, rebaseTarget)
 		}
 
 		output.Rebased = true

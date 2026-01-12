@@ -7,6 +7,7 @@ import (
 	"os"
 	"regexp"
 	"strconv"
+	"strings"
 
 	"github.com/calvin/gh-stacked/internal/git"
 	"github.com/calvin/gh-stacked/internal/github"
@@ -239,8 +240,8 @@ func runPush(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("failed to push branch %s: %w", entry.Branch, err)
 		}
 
-		// Determine base for this PR
-		prBase := baseBranch
+		// Determine base for this PR (strip origin/ prefix for GitHub API)
+		prBase := strings.TrimPrefix(baseBranch, "origin/")
 		if i > 0 {
 			prBase = entries[i-1].Branch
 		}
