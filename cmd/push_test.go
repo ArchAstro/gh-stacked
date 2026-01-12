@@ -2,6 +2,7 @@
 package cmd
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/calvin/gh-stacked/internal/git"
@@ -421,5 +422,70 @@ func TestRunPush_MultipleExistingPRs(t *testing.T) {
 		if !expectedNumbers[updated.Number] {
 			t.Errorf("unexpected PR number updated: %d", updated.Number)
 		}
+	}
+}
+
+// TestRunPush_Regroup tests the --regroup flag triggers interactive rebase
+func TestRunPush_Regroup(t *testing.T) {
+	mockGit := git.NewMockGit()
+	mockGit.CurrentBranch = "feature/auth"
+	mockGit.BaseBranch = "main"
+	mockGit.Commits = []git.Commit{
+		{Hash: "abc1234", Subject: "Add user model"},
+		{Hash: "def5678", Subject: "Add user API"},
+	}
+
+	mockGH := github.NewMockGitHub()
+
+	oldNewGit := newGit
+	oldNewGitHub := newGitHub
+	oldRegroup := pushRegroup
+	defer func() {
+		newGit = oldNewGit
+		newGitHub = oldNewGitHub
+		pushRegroup = oldRegroup
+	}()
+	newGit = func() git.GitOperations { return mockGit }
+	newGitHub = func() (github.GitHubOperations, error) { return mockGH, nil }
+	pushRegroup = true
+
+	err := runPush(nil, []string{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify InteractiveRebase was called
+	if !mockGit.WasCalled("InteractiveRebase") {
+		t.Error("expected InteractiveRebase to be called with --regroup")
+	}
+
+	// Should still create PRs after rebase
+	if len(mockGH.CreatedPRs) != 2 {
+		t.Errorf("expected 2 PRs created after regroup, got %d", len(mockGH.CreatedPRs))
+	}
+}
+
+// TestRunPush_RegroupFails tests error handling when interactive rebase fails
+func TestRunPush_RegroupFails(t *testing.T) {
+	mockGit := git.NewMockGit()
+	mockGit.CurrentBranch = "feature/auth"
+	mockGit.BaseBranch = "main"
+	mockGit.Commits = []git.Commit{
+		{Hash: "abc1234", Subject: "Add user model"},
+	}
+	mockGit.Errors["InteractiveRebase"] = errors.New("conflict")
+
+	oldNewGit := newGit
+	oldRegroup := pushRegroup
+	defer func() {
+		newGit = oldNewGit
+		pushRegroup = oldRegroup
+	}()
+	newGit = func() git.GitOperations { return mockGit }
+	pushRegroup = true
+
+	err := runPush(nil, []string{})
+	if err == nil {
+		t.Fatal("expected error when interactive rebase fails")
 	}
 }
