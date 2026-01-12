@@ -92,7 +92,28 @@ func (m *MockGitHub) UpdatePullRequestBase(number int, base string) error {
 
 func (m *MockGitHub) GetPullRequest(number int) (*PullRequestStatus, error) {
 	m.Calls = append(m.Calls, MockCall{Method: "GetPullRequest", Args: []interface{}{number}})
-	return nil, m.Errors["GetPullRequest"]
+	if err := m.Errors["GetPullRequest"]; err != nil {
+		return nil, err
+	}
+	// Find PR by number in our stored PRs
+	for _, prs := range m.PRs {
+		for _, pr := range prs {
+			if pr.Number == number {
+				return &PullRequestStatus{
+					Number:     pr.Number,
+					Title:      pr.Title,
+					URL:        pr.URL,
+					Branch:     pr.Head.Ref,
+					BaseBranch: pr.Base.Ref,
+					State:      pr.State,
+					Mergeable:  pr.Mergeable,
+					Additions:  pr.Additions,
+					Deletions:  pr.Deletions,
+				}, nil
+			}
+		}
+	}
+	return nil, fmt.Errorf("PR #%d not found", number)
 }
 
 func (m *MockGitHub) ListPullRequests(head string) ([]PullRequest, error) {

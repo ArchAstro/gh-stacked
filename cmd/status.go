@@ -139,9 +139,17 @@ func runStatus(cmd *cobra.Command, args []string) error {
 			prOutput.PRURL = pr.URL
 			prOutput.TargetBranch = pr.Base.Ref
 			prOutput.State = pr.State
-			prOutput.Mergeable = pr.Mergeable
-			prOutput.Additions = pr.Additions
-			prOutput.Deletions = pr.Deletions
+
+			// Fetch full PR details to get additions/deletions
+			fullPR, err := gh.GetPullRequest(pr.Number)
+			if err == nil {
+				prOutput.Mergeable = fullPR.Mergeable
+				prOutput.Additions = fullPR.Additions
+				prOutput.Deletions = fullPR.Deletions
+				prOutput.ChecksPassing = fullPR.ChecksPassing
+				prOutput.Approvals = fullPR.Approvals
+				prOutput.ChangesRequested = fullPR.ChangesRequested
+			}
 		}
 
 		output.PRs = append(output.PRs, prOutput)
