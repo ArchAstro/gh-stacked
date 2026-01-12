@@ -206,10 +206,50 @@ func generateStackFooter(stackID string, entries []PREntry, currentPosition int)
 
 func StripStackFooter(body string) string {
 	// Remove existing stack footer if present
+	if idx := strings.LastIndex(body, "\n---\n📚 **Stack:**"); idx != -1 {
+		return strings.TrimSpace(body[:idx])
+	}
+	// Also handle old format without bold
 	if idx := strings.LastIndex(body, "\n---\n📚 Stack:"); idx != -1 {
 		return strings.TrimSpace(body[:idx])
 	}
 	return body
+}
+
+// titlePrefixRe matches the [X/N] prefix pattern in PR titles
+var titlePrefixRe = regexp.MustCompile(`^\[(\d+)/(\d+)\]\s*`)
+
+// UpdatePRTitle updates the [X/N] prefix in a PR title while preserving user edits
+// If the title has our [X/N] prefix, update it. Otherwise, leave title unchanged.
+func UpdatePRTitle(currentTitle string, newPosition, newTotal int) (string, bool) {
+	matches := titlePrefixRe.FindStringSubmatch(currentTitle)
+	if matches == nil {
+		// Title doesn't have our prefix - user customized it, don't touch
+		return currentTitle, false
+	}
+
+	// Extract the description part (after the prefix)
+	description := titlePrefixRe.ReplaceAllString(currentTitle, "")
+
+	// Check if position/total actually changed
+	oldPos, _ := strconv.Atoi(matches[1])
+	oldTotal, _ := strconv.Atoi(matches[2])
+	if oldPos == newPosition && oldTotal == newTotal {
+		return currentTitle, false
+	}
+
+	// Build new title with updated prefix
+	newTitle := fmt.Sprintf("[%d/%d] %s", newPosition, newTotal, description)
+	return newTitle, true
+}
+
+// UpdatePRBody preserves user content in PR body while updating the stack footer
+func UpdatePRBody(currentBody string, stackID string, entries []PREntry, currentPosition int) string {
+	// Strip old footer, preserve everything else
+	userContent := StripStackFooter(currentBody)
+
+	// Append new footer
+	return userContent + generateStackFooter(stackID, entries, currentPosition)
 }
 
 // CommitInfo is the minimal commit data needed for position matching

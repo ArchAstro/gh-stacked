@@ -64,6 +64,7 @@ func (m *MockGitHub) CreatePullRequest(input CreatePullRequestInput) (*PullReque
 		Number: m.NextPRNumber,
 		URL:    fmt.Sprintf("https://github.com/%s/%s/pull/%d", m.Repo.Owner, m.Repo.Name, m.NextPRNumber),
 		Title:  input.Title,
+		Body:   input.Body,
 		State:  "open",
 	}
 	pr.Head.Ref = input.Head
@@ -102,6 +103,7 @@ func (m *MockGitHub) GetPullRequest(number int) (*PullRequestStatus, error) {
 				return &PullRequestStatus{
 					Number:     pr.Number,
 					Title:      pr.Title,
+					Body:       pr.Body,
 					URL:        pr.URL,
 					Branch:     pr.Head.Ref,
 					BaseBranch: pr.Base.Ref,

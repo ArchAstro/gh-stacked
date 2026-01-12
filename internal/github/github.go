@@ -108,6 +108,7 @@ type CreatePullRequestInput struct {
 type PullRequest struct {
 	Number    int    `json:"number"`
 	Title     string `json:"title"`
+	Body      string `json:"body"`
 	URL       string `json:"html_url"`
 	State     string `json:"state"`
 	Mergeable bool   `json:"mergeable"`
@@ -179,6 +180,7 @@ func (c *Client) UpdatePullRequestBase(number int, base string) error {
 type PullRequestStatus struct {
 	Number           int
 	Title            string
+	Body             string
 	URL              string
 	Branch           string
 	BaseBranch       string
@@ -203,6 +205,7 @@ func (c *Client) GetPullRequest(number int) (*PullRequestStatus, error) {
 	return &PullRequestStatus{
 		Number:     pr.Number,
 		Title:      pr.Title,
+		Body:       pr.Body,
 		URL:        pr.URL,
 		Branch:     pr.Head.Ref,
 		BaseBranch: pr.Base.Ref,

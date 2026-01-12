@@ -16,10 +16,9 @@ import (
 )
 
 var (
-	pushPreview             bool
-	pushRegroup             bool
-	pushSquash              []string
-	pushForceUpdateMetadata bool
+	pushPreview  bool
+	pushRegroup  bool
+	pushSquash   []string
 )
 
 // Dependency injection points for testing
@@ -68,7 +67,6 @@ func init() {
 	pushCmd.Flags().BoolVar(&pushPreview, "preview", false, "Show what would happen without making changes")
 	pushCmd.Flags().BoolVar(&pushRegroup, "regroup", false, "Interactively reorganize commits before pushing")
 	pushCmd.Flags().StringArrayVar(&pushSquash, "squash", nil, "Squash commits N-M into single PR (e.g., --squash 2-4)")
-	pushCmd.Flags().BoolVar(&pushForceUpdateMetadata, "force-update-pr-metadata", false, "Force update PR titles and bodies even for existing PRs")
 }
 
 func parseSquashRange(s string) (start, end int, err error) {
@@ -257,52 +255,108 @@ func runPush(cmd *cobra.Command, args []string) error {
 
 	// Build entries by matching commits to existing branches
 	// Key insight: use slug matching, not position, to find existing branches
-	// Track claimed branches to prevent multiple commits matching the same branch
-	var entries []stack.PREntry
-	existingPRs := make(map[int]int)    // position -> PR number (for squash validation)
-	claimedBranches := make(map[int]bool) // track which existing branches have been claimed
-	nextPosition := findMaxPosition(existingBranches) + 1
-	if nextPosition == 1 {
-		nextPosition = 1 // Start at 1 if no existing branches
+	// New commits get assigned to "holes" in the position sequence
+
+	// First pass: match all commits to existing branches and record positions
+	type commitMatchInfo struct {
+		commit   git.Commit
+		matched  bool
+		existing *existingBranchInfo
+		prInfo   *github.PullRequest
 	}
 
-	for _, commit := range commits {
-		var entry stack.PREntry
+	matchInfos := make([]commitMatchInfo, len(commits))
+	usedPositions := make(map[int]bool)
+	claimedBranches := make(map[int]bool)
 
-		// Check if this commit already has an existing branch (by slug match)
-		// Only match if the branch hasn't been claimed by a previous commit
+	for i, commit := range commits {
 		existing := matchCommitToExistingBranchExcluding(commit.Subject, existingBranches, claimedBranches)
 		if existing != nil {
-			// Mark this branch as claimed so it can't be matched again
 			claimedBranches[existing.position] = true
-
-			// Use existing branch's position and name
-			entry = stack.PREntry{
-				Position:   existing.position,
-				CommitHash: commit.Hash,
-				CommitMsg:  commit.Subject,
-				CommitBody: commit.Body,
-				Branch:     existing.branch,
-			}
-
-			// Use cached PR info (we already filtered to branches with open PRs)
+			usedPositions[existing.position] = true
 			if pr, ok := branchToPR[existing.branch]; ok {
-				entry.PRNumber = pr.Number
-				entry.PRURL = pr.URL
-				entry.CurrentBase = pr.Base.Ref
-				existingPRs[existing.position] = pr.Number
+				matchInfos[i] = commitMatchInfo{
+					commit:   commit,
+					matched:  true,
+					existing: existing,
+					prInfo:   &pr,
+				}
+			} else {
+				matchInfos[i] = commitMatchInfo{
+					commit:   commit,
+					matched:  true,
+					existing: existing,
+				}
 			}
 		} else {
-			// New commit - assign next available position
-			branchName := stack.StackBranchName(currentBranch, nextPosition, commit.Subject)
+			matchInfos[i] = commitMatchInfo{
+				commit:  commit,
+				matched: false,
+			}
+		}
+	}
+
+	// Second pass: assign positions to unmatched commits by finding holes
+	var entries []stack.PREntry
+	existingPRs := make(map[int]int) // position -> PR number (for squash validation)
+
+	for i, info := range matchInfos {
+		var entry stack.PREntry
+
+		if info.matched {
 			entry = stack.PREntry{
-				Position:   nextPosition,
-				CommitHash: commit.Hash,
-				CommitMsg:  commit.Subject,
-				CommitBody: commit.Body,
+				Position:   info.existing.position,
+				CommitHash: info.commit.Hash,
+				CommitMsg:  info.commit.Subject,
+				CommitBody: info.commit.Body,
+				Branch:     info.existing.branch,
+			}
+			if info.prInfo != nil {
+				entry.PRNumber = info.prInfo.Number
+				entry.PRURL = info.prInfo.URL
+				entry.CurrentBase = info.prInfo.Base.Ref
+				existingPRs[info.existing.position] = info.prInfo.Number
+			}
+		} else {
+			// Find position bounds for this new commit
+			// prevPos = position of previous entry (0 if first)
+			prevPos := 0
+			if i > 0 {
+				prevPos = entries[i-1].Position
+			}
+
+			// nextPos = position of next matched commit (or 100 as practical max)
+			nextPos := 100
+			for j := i + 1; j < len(matchInfos); j++ {
+				if matchInfos[j].matched {
+					nextPos = matchInfos[j].existing.position
+					break
+				}
+			}
+
+			// Find first available position in (prevPos, nextPos)
+			foundPos := 0
+			for p := prevPos + 1; p < nextPos; p++ {
+				if !usedPositions[p] {
+					foundPos = p
+					break
+				}
+			}
+
+			if foundPos == 0 {
+				return fmt.Errorf("no available position for commit %q between positions %d and %d\nThis can happen when commits are reordered. Consider closing some PRs to free up positions",
+					info.commit.Subject, prevPos, nextPos)
+			}
+
+			usedPositions[foundPos] = true
+			branchName := stack.StackBranchName(currentBranch, foundPos, info.commit.Subject)
+			entry = stack.PREntry{
+				Position:   foundPos,
+				CommitHash: info.commit.Hash,
+				CommitMsg:  info.commit.Subject,
+				CommitBody: info.commit.Body,
 				Branch:     branchName,
 			}
-			nextPosition++
 		}
 
 		entries = append(entries, entry)
@@ -406,24 +460,9 @@ func runPush(cmd *cobra.Command, args []string) error {
 				}
 			}
 
-			// Only update PR title/body if --force-update-pr-metadata is set
-			if pushForceUpdateMetadata {
-				prBody := stack.GeneratePRBody(entry.CommitMsg, entry.CommitBody, currentBranch, entries, entry.Position)
-				err = gh.UpdatePullRequest(entry.PRNumber, prTitle, prBody)
-				if err != nil {
-					return fmt.Errorf("failed to update PR #%d: %w", entry.PRNumber, err)
-				}
-				output.PRsUpdated = append(output.PRsUpdated, entry.PRNumber)
-
-				if !jsonOutput {
-					fmt.Printf("Pushed PR #%d: %s (metadata updated)\n", entry.PRNumber, entry.CommitMsg)
-				}
-			} else {
-				output.PRsUpdated = append(output.PRsUpdated, entry.PRNumber)
-
-				if !jsonOutput {
-					fmt.Printf("Pushed PR #%d: %s\n", entry.PRNumber, entry.CommitMsg)
-				}
+			output.PRsUpdated = append(output.PRsUpdated, entry.PRNumber)
+			if !jsonOutput {
+				fmt.Printf("Pushed PR #%d: %s\n", entry.PRNumber, entry.CommitMsg)
 			}
 		} else {
 			// Create new PR
@@ -448,22 +487,35 @@ func runPush(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Second pass: Update all newly created PRs with correct next links
-	// (Now that all PRs exist, the footer can link to the next PR)
-	if len(output.PRsCreated) > 1 {
-		if !jsonOutput {
-			fmt.Println("\nUpdating PR footers with stack links...")
-		}
-		for i, entry := range entries {
-			// Only update PRs we just created (not the last one - it has no next)
-			if i < len(entries)-1 && contains(output.PRsCreated, entry.PRNumber) {
-				prBody := stack.GeneratePRBody(entry.CommitMsg, entry.CommitBody, currentBranch, entries, entry.Position)
-				prTitle := stack.GeneratePRTitle(entry.CommitMsg, entry.Position, len(entries))
-				err = gh.UpdatePullRequest(entry.PRNumber, prTitle, prBody)
+	// Second pass: Update PR metadata (title prefix and stack footer)
+	// Smart update: preserve user edits, only update our managed parts
+	if !jsonOutput {
+		fmt.Println("\nUpdating PR metadata...")
+	}
+	for _, entry := range entries {
+		if entry.PRNumber > 0 {
+			// Fetch current PR to check existing title/body
+			currentPR, err := gh.GetPullRequest(entry.PRNumber)
+			if err != nil {
+				if !jsonOutput {
+					fmt.Printf("Warning: failed to fetch PR #%d: %v\n", entry.PRNumber, err)
+				}
+				continue
+			}
+
+			// Update title (only changes [X/N] prefix, preserves rest)
+			newTitle, titleChanged := stack.UpdatePRTitle(currentPR.Title, entry.Position, len(entries))
+
+			// Update body (preserves user content, updates stack footer)
+			newBody := stack.UpdatePRBody(currentPR.Body, currentBranch, entries, entry.Position)
+			bodyChanged := newBody != currentPR.Body
+
+			// Only call API if something actually changed
+			if titleChanged || bodyChanged {
+				err = gh.UpdatePullRequest(entry.PRNumber, newTitle, newBody)
 				if err != nil {
-					// Non-fatal - just warn
 					if !jsonOutput {
-						fmt.Printf("Warning: failed to update PR #%d footer: %v\n", entry.PRNumber, err)
+						fmt.Printf("Warning: failed to update PR #%d metadata: %v\n", entry.PRNumber, err)
 					}
 				}
 			}
