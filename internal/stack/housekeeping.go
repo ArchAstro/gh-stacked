@@ -16,7 +16,7 @@ type StackEntry struct {
 	PRNumber    int    // PR number (0 if no PR)
 	PRURL       string
 	PRState     string // "open", "merged", "closed"
-	Status      string // "matched", "local_only", "remote_only", "orphaned"
+	Status      string // "matched", "local_only", "remote_only", "orphaned", "dangling"
 	CommitIndex int    // Index in local commit list (for sorting)
 }
 
@@ -148,6 +148,24 @@ func AnalyzeStack(
 		return entries[i].CommitIndex < entries[j].CommitIndex
 	})
 
+	// Fourth pass: classify local_only commits before first matched as "dangling"
+	// These are commits that have already been merged and need cleanup
+	firstMatchedIndex := -1
+	for i, e := range entries {
+		if e.Status == "matched" {
+			firstMatchedIndex = i
+			break
+		}
+	}
+
+	if firstMatchedIndex > 0 {
+		for i := 0; i < firstMatchedIndex; i++ {
+			if entries[i].Status == "local_only" {
+				entries[i].Status = "dangling"
+			}
+		}
+	}
+
 	return entries
 }
 
@@ -157,6 +175,7 @@ type StackAnalysisSummary struct {
 	TotalOpenPRs   int
 	Matched        int
 	LocalOnly      int
+	Dangling       int
 	RemoteOnly     int
 	Orphaned       int
 }
@@ -173,6 +192,9 @@ func SummarizeAnalysis(entries []StackEntry) StackAnalysisSummary {
 		case "local_only":
 			summary.LocalOnly++
 			summary.TotalCommits++
+		case "dangling":
+			summary.Dangling++
+			summary.TotalCommits++
 		case "remote_only":
 			summary.RemoteOnly++
 			summary.TotalOpenPRs++
@@ -181,4 +203,26 @@ func SummarizeAnalysis(entries []StackEntry) StackAnalysisSummary {
 		}
 	}
 	return summary
+}
+
+// GetDanglingCommits returns commits that are dangling (merged but still in local history)
+func GetDanglingCommits(entries []StackEntry) []StackEntry {
+	var dangling []StackEntry
+	for _, e := range entries {
+		if e.Status == "dangling" {
+			dangling = append(dangling, e)
+		}
+	}
+	return dangling
+}
+
+// GetOrphanedBranches returns remote branches with merged/closed PRs (can be deleted)
+func GetOrphanedBranches(entries []StackEntry) []StackEntry {
+	var orphaned []StackEntry
+	for _, e := range entries {
+		if e.Status == "orphaned" {
+			orphaned = append(orphaned, e)
+		}
+	}
+	return orphaned
 }

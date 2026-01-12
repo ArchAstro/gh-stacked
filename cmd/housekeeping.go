@@ -25,6 +25,7 @@ var housekeepingCmd = &cobra.Command{
 
 Shows a table of:
   - Matched: Local commits that have corresponding open PRs
+  - Dangling: Commits before first matched (already merged, need cleanup)
   - Local only: Commits without open PRs (need to be pushed)
   - Remote only: Open PRs without matching local commits (orphaned PRs)
   - Orphaned: Remote branches with merged/closed PRs (can be deleted)`,
@@ -155,6 +156,8 @@ func runHousekeeping(cmd *cobra.Command, args []string) error {
 		switch e.Status {
 		case "matched":
 			statusIcon = "✓ matched"
+		case "dangling":
+			statusIcon = "✗ dangling"
 		case "local_only":
 			statusIcon = "⚠ local only"
 		case "remote_only":
@@ -172,6 +175,9 @@ func runHousekeeping(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  Local commits: %d\n", summary.TotalCommits)
 	fmt.Printf("  Open PRs: %d\n", summary.TotalOpenPRs)
 	fmt.Printf("  Matched: %d\n", summary.Matched)
+	if summary.Dangling > 0 {
+		fmt.Printf("  Dangling (run 'gh stacked cleanup'): %d\n", summary.Dangling)
+	}
 	if summary.LocalOnly > 0 {
 		fmt.Printf("  Local only (need push): %d\n", summary.LocalOnly)
 	}

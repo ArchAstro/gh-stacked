@@ -34,6 +34,7 @@ type StatusPROutput struct {
 	Branch           string `json:"branch"`
 	TargetBranch     string `json:"target_branch"`
 	State            string `json:"state"`
+	Status           string `json:"status"` // "matched", "local_only", "dangling"
 	Mergeable        bool   `json:"mergeable"`
 	ChecksPassing    bool   `json:"checks_passing"`
 	Approvals        int    `json:"approvals"`
@@ -173,6 +174,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 			PRNumber: e.PRNumber,
 			PRURL:    e.PRURL,
 			State:    e.PRState,
+			Status:   e.Status,
 		}
 
 		// Fetch full PR details if we have a PR
@@ -196,14 +198,18 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		return json.NewEncoder(os.Stdout).Encode(output)
 	}
 
-	// Count matched vs local-only
+	// Count by status
 	matchedCount := 0
 	localOnlyCount := 0
+	danglingCount := 0
 	for _, pr := range output.PRs {
-		if pr.PRNumber > 0 {
+		switch pr.Status {
+		case "matched":
 			matchedCount++
-		} else {
+		case "local_only":
 			localOnlyCount++
+		case "dangling":
+			danglingCount++
 		}
 	}
 
@@ -214,6 +220,9 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	}
 	if localOnlyCount > 0 {
 		fmt.Printf(", %d local only", localOnlyCount)
+	}
+	if danglingCount > 0 {
+		fmt.Printf(", %d dangling", danglingCount)
 	}
 	fmt.Println(")")
 	fmt.Println()
@@ -231,6 +240,9 @@ func runStatus(cmd *cobra.Command, args []string) error {
 				status = "WAITING"
 			}
 			posStr = fmt.Sprintf("#%d", pr.Position)
+		} else if pr.Status == "dangling" {
+			status = "DANGLING"
+			posStr = " -"
 		} else {
 			status = "LOCAL"
 			posStr = " -"
@@ -244,6 +256,8 @@ func runStatus(cmd *cobra.Command, args []string) error {
 				target = baseBranch
 			}
 			fmt.Printf("     → %s | +%d -%d\n", target, pr.Additions, pr.Deletions)
+		} else if pr.Status == "dangling" {
+			fmt.Printf("     (run 'gh stacked cleanup' to remove)\n")
 		} else {
 			fmt.Printf("     (run 'gh stacked push' to create PR)\n")
 		}
