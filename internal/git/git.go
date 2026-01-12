@@ -63,3 +63,17 @@ func (g *Git) GetCommitsSinceBase(base string) ([]Commit, error) {
 	}
 	return commits, nil
 }
+
+func (g *Git) CreateBranchAtCommit(branchName, commitHash string) error {
+	_, err := g.run("branch", "-f", branchName, commitHash)
+	return err
+}
+
+func (g *Git) PushBranch(remote, branchName string, force bool) error {
+	args := []string{"push", remote, branchName}
+	if force {
+		args = append(args, "--force-with-lease")
+	}
+	_, err := g.run(args...)
+	return err
+}

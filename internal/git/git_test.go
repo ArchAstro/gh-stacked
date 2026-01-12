@@ -4,6 +4,7 @@ package git
 import (
 	"os"
 	"os/exec"
+	"strings"
 	"testing"
 )
 
@@ -92,5 +93,28 @@ func TestGetCommitsSinceBase(t *testing.T) {
 	}
 	if commits[1].Subject != "Second feature commit" {
 		t.Errorf("expected 'Second feature commit', got '%s'", commits[1].Subject)
+	}
+}
+
+func TestCreateBranchAtCommit(t *testing.T) {
+	dir := setupTestRepo(t)
+	oldWd, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(oldWd)
+
+	// Get the commit hash
+	out, _ := exec.Command("git", "rev-parse", "HEAD").Output()
+	hash := strings.TrimSpace(string(out))
+
+	g := New()
+	err := g.CreateBranchAtCommit("test-branch", hash)
+	if err != nil {
+		t.Fatalf("CreateBranchAtCommit failed: %v", err)
+	}
+
+	// Verify branch exists
+	_, err = exec.Command("git", "rev-parse", "--verify", "test-branch").Output()
+	if err != nil {
+		t.Error("branch was not created")
 	}
 }
