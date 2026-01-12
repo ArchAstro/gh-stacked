@@ -288,6 +288,7 @@ func runPush(cmd *cobra.Command, args []string) error {
 			if pr, ok := branchToPR[existing.branch]; ok {
 				entry.PRNumber = pr.Number
 				entry.PRURL = pr.URL
+				entry.CurrentBase = pr.Base.Ref
 				existingPRs[existing.position] = pr.Number
 			}
 		} else {
@@ -380,6 +381,17 @@ func runPush(cmd *cobra.Command, args []string) error {
 
 		if entry.PRNumber > 0 {
 			// Existing PR - branch was already pushed above
+			// Check if PR needs retargeting (base changed due to new PR inserted before it)
+			if entry.CurrentBase != "" && entry.CurrentBase != prBase {
+				err = gh.UpdatePullRequestBase(entry.PRNumber, prBase)
+				if err != nil {
+					return fmt.Errorf("failed to retarget PR #%d to %s: %w", entry.PRNumber, prBase, err)
+				}
+				if !jsonOutput {
+					fmt.Printf("Retargeted PR #%d: %s → %s\n", entry.PRNumber, entry.CurrentBase, prBase)
+				}
+			}
+
 			// Only update PR title/body if --force-update-pr-metadata is set
 			if pushForceUpdateMetadata {
 				prBody := stack.GeneratePRBody(entry.CommitMsg, entry.CommitBody, currentBranch, entries, entry.Position)
