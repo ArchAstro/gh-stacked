@@ -240,7 +240,19 @@ func runPush(cmd *cobra.Command, args []string) error {
 		// Non-fatal - might be first push
 		remoteBranches = nil
 	}
-	existingBranches := parseExistingBranches(remoteBranches, currentBranch)
+	allExistingBranches := parseExistingBranches(remoteBranches, currentBranch)
+
+	// Filter to only branches that have open PRs
+	// This excludes orphaned branches from merged/closed PRs
+	var existingBranches []existingBranchInfo
+	branchToPR := make(map[string]github.PullRequest)
+	for _, eb := range allExistingBranches {
+		prs, err := gh.ListPullRequests(eb.branch)
+		if err == nil && len(prs) > 0 {
+			existingBranches = append(existingBranches, eb)
+			branchToPR[eb.branch] = prs[0]
+		}
+	}
 
 	// Build entries by matching commits to existing branches
 	// Key insight: use slug matching, not position, to find existing branches
@@ -272,12 +284,11 @@ func runPush(cmd *cobra.Command, args []string) error {
 				Branch:     existing.branch,
 			}
 
-			// Look up PR for this branch
-			prs, err := gh.ListPullRequests(existing.branch)
-			if err == nil && len(prs) > 0 {
-				entry.PRNumber = prs[0].Number
-				entry.PRURL = prs[0].URL
-				existingPRs[existing.position] = prs[0].Number
+			// Use cached PR info (we already filtered to branches with open PRs)
+			if pr, ok := branchToPR[existing.branch]; ok {
+				entry.PRNumber = pr.Number
+				entry.PRURL = pr.URL
+				existingPRs[existing.position] = pr.Number
 			}
 		} else {
 			// New commit - assign next available position

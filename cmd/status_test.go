@@ -34,6 +34,12 @@ func TestRunStatus_WithAllPRs(t *testing.T) {
 		{Hash: "def5678901234", Subject: "Add user API"},
 		{Hash: "ghi9012345678", Subject: "Add user tests"},
 	}
+	// Set up remote branches that exist on origin
+	mockGit.RemoteBranches = []string{
+		"stack/feature/auth/01-add-user-model",
+		"stack/feature/auth/02-add-user-api",
+		"stack/feature/auth/03-add-user-tests",
+	}
 
 	mockGH := github.NewMockGitHub()
 	// Add existing PRs for all 3 branches
@@ -72,20 +78,20 @@ func TestRunStatus_WithAllPRs(t *testing.T) {
 		t.Error("expected GetCommitsSinceBase to be called")
 	}
 
-	// Verify ListPullRequests was called for each branch (3 times)
-	listCalls := 0
+	// Verify ListAllPullRequests was called for each branch (3 times via AnalyzeStack)
+	listAllCalls := 0
 	for _, call := range mockGH.Calls {
-		if call.Method == "ListPullRequests" {
-			listCalls++
+		if call.Method == "ListAllPullRequests" {
+			listAllCalls++
 		}
 	}
-	if listCalls != 3 {
-		t.Errorf("expected 3 ListPullRequests calls, got %d", listCalls)
+	if listAllCalls != 3 {
+		t.Errorf("expected 3 ListAllPullRequests calls, got %d", listAllCalls)
 	}
 }
 
 func TestRunStatus_NoPRs(t *testing.T) {
-	// Scenario: 2 commits, no PRs -> shows pending status
+	// Scenario: 2 commits, no remote branches yet -> shows pending status
 	mockGit := git.NewMockGit()
 	mockGit.CurrentBranch = "feature/payments"
 	mockGit.BaseBranch = "main"
@@ -93,9 +99,11 @@ func TestRunStatus_NoPRs(t *testing.T) {
 		{Hash: "abc1234567890", Subject: "Add payment model"},
 		{Hash: "def5678901234", Subject: "Add payment service"},
 	}
+	// No remote branches - simulates commits that haven't been pushed yet
+	mockGit.RemoteBranches = nil
 
 	mockGH := github.NewMockGitHub()
-	// No PRs added - simulates commits that haven't been pushed yet
+	// No PRs added
 
 	// Save and restore original DI functions
 	oldNewGit := statusNewGit
@@ -113,15 +121,16 @@ func TestRunStatus_NoPRs(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Verify ListPullRequests was called for each branch (2 times)
-	listCalls := 0
+	// With no remote branches, ListAllPullRequests should not be called
+	// (we only check PRs for branches that exist on remote)
+	listAllCalls := 0
 	for _, call := range mockGH.Calls {
-		if call.Method == "ListPullRequests" {
-			listCalls++
+		if call.Method == "ListAllPullRequests" {
+			listAllCalls++
 		}
 	}
-	if listCalls != 2 {
-		t.Errorf("expected 2 ListPullRequests calls, got %d", listCalls)
+	if listAllCalls != 0 {
+		t.Errorf("expected 0 ListAllPullRequests calls (no remote branches), got %d", listAllCalls)
 	}
 }
 
@@ -183,7 +192,7 @@ func TestRunStatus_RejectsStackBranch(t *testing.T) {
 }
 
 func TestRunStatus_MixedPRStatus(t *testing.T) {
-	// Scenario: Some commits have PRs, some don't
+	// Scenario: Some commits have PRs, some are new (no remote branches)
 	mockGit := git.NewMockGit()
 	mockGit.CurrentBranch = "feature/mixed"
 	mockGit.BaseBranch = "main"
@@ -192,11 +201,15 @@ func TestRunStatus_MixedPRStatus(t *testing.T) {
 		{Hash: "def5678901234", Subject: "Second commit"},
 		{Hash: "ghi9012345678", Subject: "Third commit"},
 	}
+	// Only first commit has a remote branch
+	mockGit.RemoteBranches = []string{
+		"stack/feature/mixed/01-first-commit",
+	}
 
 	mockGH := github.NewMockGitHub()
-	// Only add PR for the first commit
+	// Only add PR for the first commit (the one with a remote branch)
 	mockGH.AddExistingPR("stack/feature/mixed/01-first-commit", 100, "First commit")
-	// No PR for second and third commits
+	// No PR for second and third commits (they don't have remote branches yet)
 
 	// Save and restore original DI functions
 	oldNewGit := statusNewGit
@@ -214,15 +227,15 @@ func TestRunStatus_MixedPRStatus(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Verify ListPullRequests was called for each branch (3 times)
-	listCalls := 0
+	// Only 1 remote branch exists, so only 1 ListAllPullRequests call
+	listAllCalls := 0
 	for _, call := range mockGH.Calls {
-		if call.Method == "ListPullRequests" {
-			listCalls++
+		if call.Method == "ListAllPullRequests" {
+			listAllCalls++
 		}
 	}
-	if listCalls != 3 {
-		t.Errorf("expected 3 ListPullRequests calls, got %d", listCalls)
+	if listAllCalls != 1 {
+		t.Errorf("expected 1 ListAllPullRequests calls (1 remote branch), got %d", listAllCalls)
 	}
 }
 

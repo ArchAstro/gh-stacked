@@ -125,63 +125,59 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to create GitHub client: %w", err)
 	}
 
-	// Fetch existing remote branches for this stack - SOURCE OF TRUTH for positions
+	// Fetch remote branches
 	remoteBranches, err := g.ListRemoteBranches("origin/stack/" + currentBranch + "/*")
 	if err != nil {
 		remoteBranches = nil
 	}
-	existingBranches := stack.ParseExistingBranches(remoteBranches, currentBranch)
 
-	// Build status output by matching commits to existing branches
+	// Use AnalyzeStack for consistent matching logic
+	getPRForBranch := func(branch string) (*stack.PRInfo, error) {
+		prs, err := gh.ListAllPullRequests(branch)
+		if err != nil {
+			return nil, err
+		}
+		if len(prs) == 0 {
+			return nil, nil
+		}
+		pr := prs[0]
+		return &stack.PRInfo{
+			Number: pr.Number,
+			URL:    pr.URL,
+			State:  pr.State,
+			Base:   pr.Base.Ref,
+		}, nil
+	}
+
+	entries := stack.AnalyzeStack(commits, remoteBranches, currentBranch, getPRForBranch)
+
+	// Build status output from analysis
 	output := StatusOutput{
 		StackID:     currentBranch,
 		BaseBranch:  baseBranch,
-		LocalInSync: true, // TODO: implement sync check
-		PRs:         make([]StatusPROutput, 0, len(commits)),
+		LocalInSync: true,
+		PRs:         make([]StatusPROutput, 0, len(entries)),
 	}
 
-	// Track claimed branches to prevent double-matching
-	claimedBranches := make(map[int]bool)
-	nextPosition := stack.FindMaxPosition(existingBranches) + 1
-	if nextPosition == 1 {
-		nextPosition = 1
-	}
-
-	for _, commit := range commits {
-		var position int
-		var branchName string
-
-		// Match commit to existing branch by slug
-		existing := stack.MatchCommitToExistingBranchExcluding(commit.Subject, existingBranches, claimedBranches)
-		if existing != nil {
-			claimedBranches[existing.Position] = true
-			position = existing.Position
-			branchName = existing.Branch
-		} else {
-			// New commit - assign next available position
-			position = nextPosition
-			branchName = stack.StackBranchName(currentBranch, position, commit.Subject)
-			nextPosition++
+	for _, e := range entries {
+		// Skip orphaned and remote-only entries for status display
+		if e.Status == "orphaned" || e.Status == "remote_only" {
+			continue
 		}
 
 		prOutput := StatusPROutput{
-			Position: position,
-			Commit:   commit.Hash[:7],
-			Title:    commit.Subject,
-			Branch:   branchName,
+			Position: e.Position,
+			Commit:   e.CommitHash[:7],
+			Title:    e.CommitMsg,
+			Branch:   e.Branch,
+			PRNumber: e.PRNumber,
+			PRURL:    e.PRURL,
+			State:    e.PRState,
 		}
 
-		// Try to find existing PR for this branch
-		prs, err := gh.ListPullRequests(branchName)
-		if err == nil && len(prs) > 0 {
-			pr := prs[0]
-			prOutput.PRNumber = pr.Number
-			prOutput.PRURL = pr.URL
-			prOutput.TargetBranch = pr.Base.Ref
-			prOutput.State = pr.State
-
-			// Fetch full PR details to get additions/deletions
-			fullPR, err := gh.GetPullRequest(pr.Number)
+		// Fetch full PR details if we have a PR
+		if e.PRNumber > 0 {
+			fullPR, err := gh.GetPullRequest(e.PRNumber)
 			if err == nil {
 				prOutput.Mergeable = fullPR.Mergeable
 				prOutput.Additions = fullPR.Additions
@@ -189,6 +185,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 				prOutput.ChecksPassing = fullPR.ChecksPassing
 				prOutput.Approvals = fullPR.Approvals
 				prOutput.ChangesRequested = fullPR.ChangesRequested
+				prOutput.TargetBranch = fullPR.BaseBranch
 			}
 		}
 
@@ -199,11 +196,32 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		return json.NewEncoder(os.Stdout).Encode(output)
 	}
 
+	// Count matched vs local-only
+	matchedCount := 0
+	localOnlyCount := 0
+	for _, pr := range output.PRs {
+		if pr.PRNumber > 0 {
+			matchedCount++
+		} else {
+			localOnlyCount++
+		}
+	}
+
 	// Human-readable output
-	fmt.Printf("Stack: %s (%d PRs)\n\n", output.StackID, len(output.PRs))
+	fmt.Printf("Stack: %s (%d commits", output.StackID, len(output.PRs))
+	if matchedCount > 0 {
+		fmt.Printf(", %d with PRs", matchedCount)
+	}
+	if localOnlyCount > 0 {
+		fmt.Printf(", %d local only", localOnlyCount)
+	}
+	fmt.Println(")")
+	fmt.Println()
 
 	for _, pr := range output.PRs {
-		status := "PENDING"
+		var status string
+		var posStr string
+
 		if pr.PRNumber > 0 {
 			if pr.Mergeable && pr.ChecksPassing {
 				status = "MERGEABLE"
@@ -212,9 +230,13 @@ func runStatus(cmd *cobra.Command, args []string) error {
 			} else {
 				status = "WAITING"
 			}
+			posStr = fmt.Sprintf("#%d", pr.Position)
+		} else {
+			status = "LOCAL"
+			posStr = " -"
 		}
 
-		fmt.Printf("  #%d [%s] %s\n", pr.Position, status, pr.Title)
+		fmt.Printf("  %s [%s] %s\n", posStr, status, pr.Title)
 		if pr.PRNumber > 0 {
 			fmt.Printf("     PR #%d: %s\n", pr.PRNumber, pr.PRURL)
 			target := pr.TargetBranch
@@ -223,7 +245,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 			}
 			fmt.Printf("     → %s | +%d -%d\n", target, pr.Additions, pr.Deletions)
 		} else {
-			fmt.Printf("     (not yet pushed)\n")
+			fmt.Printf("     (run 'gh stacked push' to create PR)\n")
 		}
 		fmt.Println()
 	}
