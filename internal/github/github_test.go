@@ -14,3 +14,17 @@ func TestNewClient(t *testing.T) {
 		t.Error("expected non-nil client")
 	}
 }
+
+func TestCreatePullRequestInput(t *testing.T) {
+	// Test the PR input struct construction (no actual API call)
+	input := CreatePullRequestInput{
+		Title:  "Add User model",
+		Body:   "Description here",
+		Head:   "stack/feature/01-add-user",
+		Base:   "main",
+	}
+
+	if input.Title != "Add User model" {
+		t.Errorf("unexpected title: %s", input.Title)
+	}
+}
