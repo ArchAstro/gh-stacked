@@ -67,3 +67,30 @@ func TestGetCurrentBranch(t *testing.T) {
 		t.Errorf("expected 'feature/my-feature', got '%s'", branch)
 	}
 }
+
+func TestGetCommitsSinceBase(t *testing.T) {
+	dir := setupTestRepo(t)
+	oldWd, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(oldWd)
+
+	// Create feature branch with 2 commits
+	exec.Command("git", "checkout", "-b", "feature/test").Run()
+	exec.Command("git", "commit", "--allow-empty", "-m", "First feature commit").Run()
+	exec.Command("git", "commit", "--allow-empty", "-m", "Second feature commit").Run()
+
+	g := New()
+	commits, err := g.GetCommitsSinceBase("main")
+	if err != nil {
+		t.Fatalf("GetCommitsSinceBase failed: %v", err)
+	}
+	if len(commits) != 2 {
+		t.Errorf("expected 2 commits, got %d", len(commits))
+	}
+	if commits[0].Subject != "First feature commit" {
+		t.Errorf("expected 'First feature commit', got '%s'", commits[0].Subject)
+	}
+	if commits[1].Subject != "Second feature commit" {
+		t.Errorf("expected 'Second feature commit', got '%s'", commits[1].Subject)
+	}
+}

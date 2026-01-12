@@ -35,3 +35,31 @@ func (g *Git) GetBaseBranch() (string, error) {
 func (g *Git) GetCurrentBranch() (string, error) {
 	return g.run("rev-parse", "--abbrev-ref", "HEAD")
 }
+
+type Commit struct {
+	Hash    string
+	Subject string
+}
+
+func (g *Git) GetCommitsSinceBase(base string) ([]Commit, error) {
+	// Get commits from base to HEAD, oldest first
+	out, err := g.run("log", "--reverse", "--format=%H %s", base+"..HEAD")
+	if err != nil {
+		return nil, err
+	}
+	if out == "" {
+		return nil, nil
+	}
+
+	var commits []Commit
+	for _, line := range strings.Split(out, "\n") {
+		parts := strings.SplitN(line, " ", 2)
+		if len(parts) == 2 {
+			commits = append(commits, Commit{
+				Hash:    parts[0],
+				Subject: parts[1],
+			})
+		}
+	}
+	return commits, nil
+}
