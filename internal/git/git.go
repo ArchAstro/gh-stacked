@@ -31,3 +31,7 @@ func (g *Git) GetBaseBranch() (string, error) {
 	}
 	return "main", nil // Default fallback
 }
+
+func (g *Git) GetCurrentBranch() (string, error) {
+	return g.run("rev-parse", "--abbrev-ref", "HEAD")
+}

@@ -49,3 +49,21 @@ func TestGetBaseBranch(t *testing.T) {
 		t.Errorf("expected base 'main', got '%s'", base)
 	}
 }
+
+func TestGetCurrentBranch(t *testing.T) {
+	dir := setupTestRepo(t)
+	oldWd, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(oldWd)
+
+	exec.Command("git", "checkout", "-b", "feature/my-feature").Run()
+
+	g := New()
+	branch, err := g.GetCurrentBranch()
+	if err != nil {
+		t.Fatalf("GetCurrentBranch failed: %v", err)
+	}
+	if branch != "feature/my-feature" {
+		t.Errorf("expected 'feature/my-feature', got '%s'", branch)
+	}
+}
