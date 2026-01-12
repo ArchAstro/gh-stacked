@@ -16,8 +16,7 @@ Each commit on your branch becomes a separate PR, chained together so reviewers 
 ```bash
 git clone https://github.com/calvin/gh-stacked.git
 cd gh-stacked
-go build -o gh-stacked .
-gh extension install .
+make install
 ```
 
 ### Verify installation
@@ -175,20 +174,21 @@ gh stacked merge 1
 gh stacked status
 ```
 
-## Building
+## Development
 
 ```bash
-# Build
-go build -o gh-stacked .
-
-# Run tests
-go test ./...
-
-# Run tests with coverage
-go test ./... -cover
-
-# Install locally
-cp gh-stacked ~/.local/share/gh/extensions/gh-stacked/
+make build         # Build the binary
+make test          # Run tests
+make test-verbose  # Run tests with verbose output
+make cover         # Run tests with coverage summary
+make cover-html    # Generate HTML coverage report
+make install       # Build and install as gh extension
+make uninstall     # Remove the extension
+make clean         # Remove build artifacts
+make fmt           # Format code
+make lint          # Run linter (requires golangci-lint)
+make dev           # Format, test, and build
+make check         # Format, lint, and test (pre-commit check)
 ```
 
 ## Architecture
