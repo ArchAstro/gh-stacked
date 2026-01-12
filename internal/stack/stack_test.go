@@ -103,3 +103,99 @@ func TestGenerateStackFooter(t *testing.T) {
 		t.Error("footer should reference next PR")
 	}
 }
+
+func TestGeneratePRTitle(t *testing.T) {
+	tests := []struct {
+		commitMsg string
+		position  int
+		total     int
+		expected  string
+	}{
+		{"Add user model", 1, 3, "[1/3] Add user model"},
+		{"Fix bug", 2, 5, "[2/5] Fix bug"},
+		{"Update API", 10, 10, "[10/10] Update API"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.expected, func(t *testing.T) {
+			result := GeneratePRTitle(tt.commitMsg, tt.position, tt.total)
+			if result != tt.expected {
+				t.Errorf("got %q, want %q", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestGeneratePRBody(t *testing.T) {
+	entries := []PREntry{
+		{Position: 1, PRNumber: 42, PRURL: "https://github.com/org/repo/pull/42"},
+		{Position: 2, PRNumber: 43, PRURL: "https://github.com/org/repo/pull/43"},
+		{Position: 3, PRNumber: 44, PRURL: "https://github.com/org/repo/pull/44"},
+	}
+
+	body := GeneratePRBody("Add user model", "feature/auth", entries, 1)
+
+	// Should have header
+	if !strings.Contains(body, "## Add user model") {
+		t.Error("body should contain commit message as header")
+	}
+
+	// Should have description placeholder
+	if !strings.Contains(body, "<!-- Add description here -->") {
+		t.Error("body should contain description placeholder")
+	}
+
+	// Should have stack footer
+	if !strings.Contains(body, "📚 **Stack:**") {
+		t.Error("body should contain stack footer")
+	}
+
+	// Should have stack info
+	if !strings.Contains(body, "feature/auth") {
+		t.Error("body should contain stack ID")
+	}
+}
+
+func TestGeneratePRBody_FirstPR(t *testing.T) {
+	entries := []PREntry{
+		{Position: 1, PRNumber: 0},  // This PR not yet created
+		{Position: 2, PRNumber: 43, PRURL: "https://github.com/org/repo/pull/43"},
+	}
+
+	body := GeneratePRBody("Add user model", "feature/auth", entries, 1)
+
+	// First PR should link to next (if it exists)
+	if !strings.Contains(body, "#43") {
+		t.Error("body should reference next PR")
+	}
+}
+
+func TestGeneratePRBody_LastPR(t *testing.T) {
+	entries := []PREntry{
+		{Position: 1, PRNumber: 42, PRURL: "https://github.com/org/repo/pull/42"},
+		{Position: 2, PRNumber: 0},  // This PR not yet created
+	}
+
+	body := GeneratePRBody("Add API", "feature/auth", entries, 2)
+
+	// Last PR should link to previous
+	if !strings.Contains(body, "#42") {
+		t.Error("body should reference previous PR")
+	}
+}
+
+func TestStripStackFooter(t *testing.T) {
+	body := "## My PR\n\nSome description\n\n---\n📚 Stack: `feature/auth` (1/3)"
+
+	stripped := StripStackFooter(body)
+
+	if strings.Contains(stripped, "Stack:") {
+		t.Error("stripped body should not contain footer")
+	}
+	if !strings.Contains(stripped, "My PR") {
+		t.Error("stripped body should keep header")
+	}
+	if !strings.Contains(stripped, "Some description") {
+		t.Error("stripped body should keep description")
+	}
+}

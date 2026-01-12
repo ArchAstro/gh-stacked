@@ -133,6 +133,17 @@ func TestRunPush_CreatesNewPRs(t *testing.T) {
 	if pushBranchCalls != 3 {
 		t.Errorf("expected 3 PushBranch calls, got %d", pushBranchCalls)
 	}
+
+	// Verify PR titles have [X/N] prefix
+	if mockGH.CreatedPRs[0].Title != "[1/3] Add user model" {
+		t.Errorf("PR1 title should have [1/3] prefix, got %q", mockGH.CreatedPRs[0].Title)
+	}
+	if mockGH.CreatedPRs[1].Title != "[2/3] Add user API" {
+		t.Errorf("PR2 title should have [2/3] prefix, got %q", mockGH.CreatedPRs[1].Title)
+	}
+	if mockGH.CreatedPRs[2].Title != "[3/3] Add user tests" {
+		t.Errorf("PR3 title should have [3/3] prefix, got %q", mockGH.CreatedPRs[2].Title)
+	}
 }
 
 // TestRunPush_UpdatesExistingPRs tests 2 commits with 1 existing PR: creates 1, updates 1
@@ -151,12 +162,15 @@ func TestRunPush_UpdatesExistingPRs(t *testing.T) {
 
 	oldNewGit := newGit
 	oldNewGitHub := newGitHub
+	oldForceUpdate := pushForceUpdateMetadata
 	defer func() {
 		newGit = oldNewGit
 		newGitHub = oldNewGitHub
+		pushForceUpdateMetadata = oldForceUpdate
 	}()
 	newGit = func() git.GitOperations { return mockGit }
 	newGitHub = func() (github.GitHubOperations, error) { return mockGH, nil }
+	pushForceUpdateMetadata = true // Must set this to update existing PRs
 
 	err := runPush(nil, []string{})
 	if err != nil {
@@ -396,12 +410,15 @@ func TestRunPush_MultipleExistingPRs(t *testing.T) {
 
 	oldNewGit := newGit
 	oldNewGitHub := newGitHub
+	oldForceUpdate := pushForceUpdateMetadata
 	defer func() {
 		newGit = oldNewGit
 		newGitHub = oldNewGitHub
+		pushForceUpdateMetadata = oldForceUpdate
 	}()
 	newGit = func() git.GitOperations { return mockGit }
 	newGitHub = func() (github.GitHubOperations, error) { return mockGH, nil }
+	pushForceUpdateMetadata = true // Must set this to update existing PRs
 
 	err := runPush(nil, []string{})
 	if err != nil {
@@ -422,6 +439,46 @@ func TestRunPush_MultipleExistingPRs(t *testing.T) {
 		if !expectedNumbers[updated.Number] {
 			t.Errorf("unexpected PR number updated: %d", updated.Number)
 		}
+	}
+}
+
+// TestRunPush_SkipsExistingPRsWithoutFlag tests that existing PRs are skipped without --force-update-pr-metadata
+func TestRunPush_SkipsExistingPRsWithoutFlag(t *testing.T) {
+	mockGit := git.NewMockGit()
+	mockGit.CurrentBranch = "feature/auth"
+	mockGit.BaseBranch = "main"
+	mockGit.Commits = []git.Commit{
+		{Hash: "abc1234", Subject: "Add user model"},
+		{Hash: "def5678", Subject: "Add user API"},
+	}
+
+	mockGH := github.NewMockGitHub()
+	mockGH.AddExistingPR("stack/feature/auth/01-add-user-model", 100, "Add user model")
+	// Second commit has no existing PR
+
+	oldNewGit := newGit
+	oldNewGitHub := newGitHub
+	oldForceUpdate := pushForceUpdateMetadata
+	defer func() {
+		newGit = oldNewGit
+		newGitHub = oldNewGitHub
+		pushForceUpdateMetadata = oldForceUpdate
+	}()
+	newGit = func() git.GitOperations { return mockGit }
+	newGitHub = func() (github.GitHubOperations, error) { return mockGH, nil }
+	pushForceUpdateMetadata = false // Ensure flag is off
+
+	err := runPush(nil, []string{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should create 1 new PR (for commit 2), NOT update existing PR (commit 1)
+	if len(mockGH.CreatedPRs) != 1 {
+		t.Errorf("expected 1 PR created, got %d", len(mockGH.CreatedPRs))
+	}
+	if len(mockGH.UpdatedPRs) != 0 {
+		t.Errorf("expected 0 PRs updated without flag, got %d", len(mockGH.UpdatedPRs))
 	}
 }
 

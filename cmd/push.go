@@ -15,9 +15,10 @@ import (
 )
 
 var (
-	pushPreview bool
-	pushRegroup bool
-	pushSquash  []string
+	pushPreview             bool
+	pushRegroup             bool
+	pushSquash              []string
+	pushForceUpdateMetadata bool
 )
 
 // Dependency injection points for testing
@@ -65,6 +66,7 @@ func init() {
 	pushCmd.Flags().BoolVar(&pushPreview, "preview", false, "Show what would happen without making changes")
 	pushCmd.Flags().BoolVar(&pushRegroup, "regroup", false, "Interactively reorganize commits before pushing")
 	pushCmd.Flags().StringArrayVar(&pushSquash, "squash", nil, "Squash commits N-M into single PR (e.g., --squash 2-4)")
+	pushCmd.Flags().BoolVar(&pushForceUpdateMetadata, "force-update-pr-metadata", false, "Force update PR titles and bodies even for existing PRs")
 }
 
 func parseSquashRange(s string) (start, end int, err error) {
@@ -242,25 +244,33 @@ func runPush(cmd *cobra.Command, args []string) error {
 			prBase = entries[i-1].Branch
 		}
 
-		if entry.PRNumber > 0 {
-			// Update existing PR
-			allEntries := entries
-			footer := stack.GenerateStackFooter(currentBranch, allEntries, entry.Position)
-			err = gh.UpdatePullRequest(entry.PRNumber, entry.CommitMsg, footer)
-			if err != nil {
-				return fmt.Errorf("failed to update PR #%d: %w", entry.PRNumber, err)
-			}
-			output.PRsUpdated = append(output.PRsUpdated, entry.PRNumber)
+		total := len(entries)
+		prTitle := stack.GeneratePRTitle(entry.CommitMsg, entry.Position, total)
 
-			if !jsonOutput {
-				fmt.Printf("Updated PR #%d: %s\n", entry.PRNumber, entry.CommitMsg)
+		if entry.PRNumber > 0 {
+			// Update existing PR (only if --force-update-pr-metadata is set)
+			if pushForceUpdateMetadata {
+				prBody := stack.GeneratePRBody(entry.CommitMsg, currentBranch, entries, entry.Position)
+				err = gh.UpdatePullRequest(entry.PRNumber, prTitle, prBody)
+				if err != nil {
+					return fmt.Errorf("failed to update PR #%d: %w", entry.PRNumber, err)
+				}
+				output.PRsUpdated = append(output.PRsUpdated, entry.PRNumber)
+
+				if !jsonOutput {
+					fmt.Printf("Updated PR #%d: %s\n", entry.PRNumber, entry.CommitMsg)
+				}
+			} else {
+				if !jsonOutput {
+					fmt.Printf("Skipped PR #%d (use --force-update-pr-metadata to update)\n", entry.PRNumber)
+				}
 			}
 		} else {
 			// Create new PR
-			footer := stack.GenerateStackFooter(currentBranch, entries, entry.Position)
+			prBody := stack.GeneratePRBody(entry.CommitMsg, currentBranch, entries, entry.Position)
 			pr, err := gh.CreatePullRequest(github.CreatePullRequestInput{
-				Title: entry.CommitMsg,
-				Body:  footer,
+				Title: prTitle,
+				Body:  prBody,
 				Head:  entry.Branch,
 				Base:  prBase,
 			})
@@ -278,6 +288,28 @@ func runPush(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Second pass: Update all newly created PRs with correct next links
+	// (Now that all PRs exist, the footer can link to the next PR)
+	if len(output.PRsCreated) > 1 {
+		if !jsonOutput {
+			fmt.Println("\nUpdating PR footers with stack links...")
+		}
+		for i, entry := range entries {
+			// Only update PRs we just created (not the last one - it has no next)
+			if i < len(entries)-1 && contains(output.PRsCreated, entry.PRNumber) {
+				prBody := stack.GeneratePRBody(entry.CommitMsg, currentBranch, entries, entry.Position)
+				prTitle := stack.GeneratePRTitle(entry.CommitMsg, entry.Position, len(entries))
+				err = gh.UpdatePullRequest(entry.PRNumber, prTitle, prBody)
+				if err != nil {
+					// Non-fatal - just warn
+					if !jsonOutput {
+						fmt.Printf("Warning: failed to update PR #%d footer: %v\n", entry.PRNumber, err)
+					}
+				}
+			}
+		}
+	}
+
 	output.Action = "created"
 	if len(output.PRsUpdated) > 0 && len(output.PRsCreated) == 0 {
 		output.Action = "updated"
@@ -291,4 +323,14 @@ func runPush(cmd *cobra.Command, args []string) error {
 		len(output.PRsCreated), len(output.PRsUpdated))
 
 	return nil
+}
+
+// contains checks if a slice contains a value
+func contains(slice []int, val int) bool {
+	for _, item := range slice {
+		if item == val {
+			return true
+		}
+	}
+	return false
 }

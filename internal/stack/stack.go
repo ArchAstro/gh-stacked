@@ -64,15 +64,41 @@ type PREntry struct {
 	Deletions     int
 }
 
+// GeneratePRTitle creates the PR title with [X/N] prefix
+func GeneratePRTitle(commitMsg string, position, total int) string {
+	return fmt.Sprintf("[%d/%d] %s", position, total, commitMsg)
+}
+
+// GeneratePRBody creates the full PR body with description and stack footer
+func GeneratePRBody(commitMsg string, stackID string, entries []PREntry, currentPosition int) string {
+	var body strings.Builder
+
+	// Header with commit message
+	body.WriteString(fmt.Sprintf("## %s\n\n", commitMsg))
+
+	// Placeholder for description
+	body.WriteString("<!-- Add description here -->\n")
+
+	// Stack footer
+	body.WriteString(generateStackFooter(stackID, entries, currentPosition))
+
+	return body.String()
+}
+
+// GenerateStackFooter generates just the footer (for backwards compatibility)
 func GenerateStackFooter(stackID string, entries []PREntry, currentPosition int) string {
+	return generateStackFooter(stackID, entries, currentPosition)
+}
+
+func generateStackFooter(stackID string, entries []PREntry, currentPosition int) string {
 	total := len(entries)
 	var prev, next string
 
 	for _, e := range entries {
-		if e.Position == currentPosition-1 {
+		if e.Position == currentPosition-1 && e.PRNumber > 0 {
 			prev = fmt.Sprintf("[#%d](%s)", e.PRNumber, e.PRURL)
 		}
-		if e.Position == currentPosition+1 {
+		if e.Position == currentPosition+1 && e.PRNumber > 0 {
 			next = fmt.Sprintf("[#%d](%s)", e.PRNumber, e.PRURL)
 		}
 	}
@@ -85,7 +111,7 @@ func GenerateStackFooter(stackID string, entries []PREntry, currentPosition int)
 		parts = append(parts, "→ "+next)
 	}
 
-	return fmt.Sprintf("\n---\n📚 Stack: %s", strings.Join(parts, " | "))
+	return fmt.Sprintf("\n---\n📚 **Stack:** %s", strings.Join(parts, " | "))
 }
 
 func StripStackFooter(body string) string {
