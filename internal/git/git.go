@@ -40,11 +40,18 @@ func (g *Git) GetCurrentBranch() (string, error) {
 type Commit struct {
 	Hash    string
 	Subject string
+	Body    string
 }
 
 func (g *Git) GetCommitsSinceBase(base string) ([]Commit, error) {
 	// Get commits from base to HEAD, oldest first
-	out, err := g.run("log", "--reverse", "--format=%H %s", base+"..HEAD")
+	// Use a unique separator to split commits and their parts
+	const recordSep = "---COMMIT_RECORD---"
+	const fieldSep = "---FIELD_SEP---"
+
+	// Format: hash<sep>subject<sep>body<record>
+	format := "%H" + fieldSep + "%s" + fieldSep + "%b" + recordSep
+	out, err := g.run("log", "--reverse", "--format="+format, base+"..HEAD")
 	if err != nil {
 		return nil, err
 	}
@@ -53,13 +60,22 @@ func (g *Git) GetCommitsSinceBase(base string) ([]Commit, error) {
 	}
 
 	var commits []Commit
-	for _, line := range strings.Split(out, "\n") {
-		parts := strings.SplitN(line, " ", 2)
-		if len(parts) == 2 {
-			commits = append(commits, Commit{
+	records := strings.Split(out, recordSep)
+	for _, record := range records {
+		record = strings.TrimSpace(record)
+		if record == "" {
+			continue
+		}
+		parts := strings.Split(record, fieldSep)
+		if len(parts) >= 2 {
+			commit := Commit{
 				Hash:    parts[0],
 				Subject: parts[1],
-			})
+			}
+			if len(parts) >= 3 {
+				commit.Body = strings.TrimSpace(parts[2])
+			}
+			commits = append(commits, commit)
 		}
 	}
 	return commits, nil

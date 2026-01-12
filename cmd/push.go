@@ -178,6 +178,7 @@ func runPush(cmd *cobra.Command, args []string) error {
 			Position:   position,
 			CommitHash: commit.Hash,
 			CommitMsg:  commit.Subject,
+			CommitBody: commit.Body,
 			Branch:     branchName,
 		}
 
@@ -250,7 +251,7 @@ func runPush(cmd *cobra.Command, args []string) error {
 		if entry.PRNumber > 0 {
 			// Update existing PR (only if --force-update-pr-metadata is set)
 			if pushForceUpdateMetadata {
-				prBody := stack.GeneratePRBody(entry.CommitMsg, currentBranch, entries, entry.Position)
+				prBody := stack.GeneratePRBody(entry.CommitMsg, entry.CommitBody, currentBranch, entries, entry.Position)
 				err = gh.UpdatePullRequest(entry.PRNumber, prTitle, prBody)
 				if err != nil {
 					return fmt.Errorf("failed to update PR #%d: %w", entry.PRNumber, err)
@@ -267,7 +268,7 @@ func runPush(cmd *cobra.Command, args []string) error {
 			}
 		} else {
 			// Create new PR
-			prBody := stack.GeneratePRBody(entry.CommitMsg, currentBranch, entries, entry.Position)
+			prBody := stack.GeneratePRBody(entry.CommitMsg, entry.CommitBody, currentBranch, entries, entry.Position)
 			pr, err := gh.CreatePullRequest(github.CreatePullRequestInput{
 				Title: prTitle,
 				Body:  prBody,
@@ -297,7 +298,7 @@ func runPush(cmd *cobra.Command, args []string) error {
 		for i, entry := range entries {
 			// Only update PRs we just created (not the last one - it has no next)
 			if i < len(entries)-1 && contains(output.PRsCreated, entry.PRNumber) {
-				prBody := stack.GeneratePRBody(entry.CommitMsg, currentBranch, entries, entry.Position)
+				prBody := stack.GeneratePRBody(entry.CommitMsg, entry.CommitBody, currentBranch, entries, entry.Position)
 				prTitle := stack.GeneratePRTitle(entry.CommitMsg, entry.Position, len(entries))
 				err = gh.UpdatePullRequest(entry.PRNumber, prTitle, prBody)
 				if err != nil {

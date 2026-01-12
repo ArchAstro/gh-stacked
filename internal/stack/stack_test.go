@@ -133,16 +133,16 @@ func TestGeneratePRBody(t *testing.T) {
 		{Position: 3, PRNumber: 44, PRURL: "https://github.com/org/repo/pull/44"},
 	}
 
-	body := GeneratePRBody("Add user model", "feature/auth", entries, 1)
+	body := GeneratePRBody("Add user model", "", "feature/auth", entries, 1)
 
 	// Should have header
 	if !strings.Contains(body, "## Add user model") {
 		t.Error("body should contain commit message as header")
 	}
 
-	// Should have description placeholder
+	// Should have description placeholder (since no commit body provided)
 	if !strings.Contains(body, "<!-- Add description here -->") {
-		t.Error("body should contain description placeholder")
+		t.Error("body should contain description placeholder when no commit body")
 	}
 
 	// Should have stack footer
@@ -156,13 +156,42 @@ func TestGeneratePRBody(t *testing.T) {
 	}
 }
 
+func TestGeneratePRBody_WithCommitBody(t *testing.T) {
+	entries := []PREntry{
+		{Position: 1, PRNumber: 42, PRURL: "https://github.com/org/repo/pull/42"},
+	}
+
+	commitBody := "This is a detailed description of the changes.\n\nIt includes multiple paragraphs."
+	body := GeneratePRBody("Add user model", commitBody, "feature/auth", entries, 1)
+
+	// Should have header
+	if !strings.Contains(body, "## Add user model") {
+		t.Error("body should contain commit message as header")
+	}
+
+	// Should have commit body
+	if !strings.Contains(body, "This is a detailed description") {
+		t.Error("body should contain commit body")
+	}
+
+	// Should NOT have placeholder since commit body was provided
+	if strings.Contains(body, "<!-- Add description here -->") {
+		t.Error("body should not contain placeholder when commit body is provided")
+	}
+
+	// Should have stack footer
+	if !strings.Contains(body, "📚 **Stack:**") {
+		t.Error("body should contain stack footer")
+	}
+}
+
 func TestGeneratePRBody_FirstPR(t *testing.T) {
 	entries := []PREntry{
 		{Position: 1, PRNumber: 0},  // This PR not yet created
 		{Position: 2, PRNumber: 43, PRURL: "https://github.com/org/repo/pull/43"},
 	}
 
-	body := GeneratePRBody("Add user model", "feature/auth", entries, 1)
+	body := GeneratePRBody("Add user model", "", "feature/auth", entries, 1)
 
 	// First PR should link to next (if it exists)
 	if !strings.Contains(body, "#43") {
@@ -176,7 +205,7 @@ func TestGeneratePRBody_LastPR(t *testing.T) {
 		{Position: 2, PRNumber: 0},  // This PR not yet created
 	}
 
-	body := GeneratePRBody("Add API", "feature/auth", entries, 2)
+	body := GeneratePRBody("Add API", "", "feature/auth", entries, 2)
 
 	// Last PR should link to previous
 	if !strings.Contains(body, "#42") {

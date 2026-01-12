@@ -53,6 +53,7 @@ type PREntry struct {
 	Position      int
 	CommitHash    string
 	CommitMsg     string
+	CommitBody    string
 	Branch        string
 	PRNumber      int
 	PRURL         string
@@ -70,14 +71,19 @@ func GeneratePRTitle(commitMsg string, position, total int) string {
 }
 
 // GeneratePRBody creates the full PR body with description and stack footer
-func GeneratePRBody(commitMsg string, stackID string, entries []PREntry, currentPosition int) string {
+func GeneratePRBody(commitMsg string, commitBody string, stackID string, entries []PREntry, currentPosition int) string {
 	var body strings.Builder
 
 	// Header with commit message
 	body.WriteString(fmt.Sprintf("## %s\n\n", commitMsg))
 
-	// Placeholder for description
-	body.WriteString("<!-- Add description here -->\n")
+	// Include commit body if present, otherwise add placeholder
+	if commitBody != "" {
+		body.WriteString(commitBody)
+		body.WriteString("\n")
+	} else {
+		body.WriteString("<!-- Add description here -->\n")
+	}
 
 	// Stack footer
 	body.WriteString(generateStackFooter(stackID, entries, currentPosition))
