@@ -12,6 +12,12 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// Dependency injection points for testing
+var (
+	statusNewGit    = func() git.GitOperations { return git.New() }
+	statusNewGitHub = func() (github.GitHubOperations, error) { return github.NewClient() }
+)
+
 type StatusOutput struct {
 	StackID     string           `json:"stack_id"`
 	BaseBranch  string           `json:"base_branch"`
@@ -61,7 +67,7 @@ func init() {
 }
 
 func runStatus(cmd *cobra.Command, args []string) error {
-	g := git.New()
+	g := statusNewGit()
 
 	// Get current branch
 	currentBranch, err := g.GetCurrentBranch()
@@ -101,7 +107,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	// Try to get GitHub client
-	gh, err := github.NewClient()
+	gh, err := statusNewGitHub()
 	if err != nil {
 		return fmt.Errorf("failed to create GitHub client: %w", err)
 	}

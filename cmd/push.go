@@ -20,6 +20,12 @@ var (
 	pushSquash  []string
 )
 
+// Dependency injection points for testing
+var (
+	newGit    = func() git.GitOperations { return git.New() }
+	newGitHub = func() (github.GitHubOperations, error) { return github.NewClient() }
+)
+
 type PushOutput struct {
 	Action     string `json:"action"`
 	StackID    string `json:"stack_id"`
@@ -76,7 +82,7 @@ func parseSquashRange(s string) (start, end int, err error) {
 }
 
 func runPush(cmd *cobra.Command, args []string) error {
-	g := git.New()
+	g := newGit()
 
 	// Get current branch
 	currentBranch, err := g.GetCurrentBranch()
@@ -106,7 +112,7 @@ func runPush(cmd *cobra.Command, args []string) error {
 	}
 
 	// Get GitHub client
-	gh, err := github.NewClient()
+	gh, err := newGitHub()
 	if err != nil {
 		return fmt.Errorf("failed to create GitHub client: %w", err)
 	}

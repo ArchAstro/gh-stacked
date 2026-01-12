@@ -12,6 +12,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// Dependency injection points for testing
+var amendNewGit = func() git.GitOperations { return git.New() }
+
 type AmendOutput struct {
 	Amended int      `json:"amended"`
 	Commit  string   `json:"commit"`
@@ -47,7 +50,7 @@ func runAmend(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("invalid PR number: %s", args[0])
 	}
 
-	g := git.New()
+	g := amendNewGit()
 
 	// Check for staged changes
 	hasStaged, err := g.HasStagedChanges()

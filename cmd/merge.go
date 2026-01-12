@@ -15,6 +15,12 @@ import (
 
 var mergeNoRebase bool
 
+// Dependency injection points for testing
+var (
+	mergeNewGit    = func() git.GitOperations { return git.New() }
+	mergeNewGitHub = func() (github.GitHubOperations, error) { return github.NewClient() }
+)
+
 type MergeOutput struct {
 	Merged       int    `json:"merged"`
 	MergeCommit  string `json:"merge_commit,omitempty"`
@@ -57,7 +63,7 @@ func runMerge(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("invalid PR number: %s", args[0])
 	}
 
-	g := git.New()
+	g := mergeNewGit()
 
 	// Get current branch
 	currentBranch, err := g.GetCurrentBranch()
@@ -96,7 +102,7 @@ Stack order:
 	}
 
 	// Get GitHub client
-	gh, err := github.NewClient()
+	gh, err := mergeNewGitHub()
 	if err != nil {
 		return fmt.Errorf("failed to create GitHub client: %w", err)
 	}
