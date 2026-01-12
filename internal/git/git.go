@@ -2,6 +2,7 @@
 package git
 
 import (
+	"os"
 	"os/exec"
 	"strings"
 )
@@ -75,5 +76,39 @@ func (g *Git) PushBranch(remote, branchName string, force bool) error {
 		args = append(args, "--force-with-lease")
 	}
 	_, err := g.run(args...)
+	return err
+}
+
+func (g *Git) CreateFixupCommit(targetHash string) error {
+	_, err := g.run("commit", "--fixup="+targetHash)
+	return err
+}
+
+func (g *Git) AutosquashRebase(base string) error {
+	// GIT_SEQUENCE_EDITOR=true makes rebase non-interactive
+	cmd := exec.Command("git", "rebase", "-i", "--autosquash", base)
+	cmd.Env = append(os.Environ(), "GIT_SEQUENCE_EDITOR=true")
+	return cmd.Run()
+}
+
+func (g *Git) HasStagedChanges() (bool, error) {
+	out, err := g.run("diff", "--cached", "--name-only")
+	if err != nil {
+		return false, err
+	}
+	return out != "", nil
+}
+
+func (g *Git) AbortRebase() error {
+	_, err := g.run("rebase", "--abort")
+	return err
+}
+
+func (g *Git) GetOriginalHead() (string, error) {
+	return g.run("rev-parse", "ORIG_HEAD")
+}
+
+func (g *Git) ResetHard(ref string) error {
+	_, err := g.run("reset", "--hard", ref)
 	return err
 }

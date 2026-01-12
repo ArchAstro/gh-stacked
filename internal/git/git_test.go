@@ -118,3 +118,32 @@ func TestCreateBranchAtCommit(t *testing.T) {
 		t.Error("branch was not created")
 	}
 }
+
+func TestCreateFixupCommit(t *testing.T) {
+	dir := setupTestRepo(t)
+	oldWd, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(oldWd)
+
+	// Create a commit to fixup
+	exec.Command("git", "commit", "--allow-empty", "-m", "Original commit").Run()
+	out, _ := exec.Command("git", "rev-parse", "HEAD").Output()
+	targetHash := strings.TrimSpace(string(out))
+
+	// Create a file to stage
+	os.WriteFile("test.txt", []byte("content"), 0644)
+	exec.Command("git", "add", "test.txt").Run()
+
+	g := New()
+	err := g.CreateFixupCommit(targetHash)
+	if err != nil {
+		t.Fatalf("CreateFixupCommit failed: %v", err)
+	}
+
+	// Verify fixup commit was created
+	out, _ = exec.Command("git", "log", "-1", "--format=%s").Output()
+	subject := strings.TrimSpace(string(out))
+	if !strings.HasPrefix(subject, "fixup! ") {
+		t.Errorf("expected fixup commit, got '%s'", subject)
+	}
+}
