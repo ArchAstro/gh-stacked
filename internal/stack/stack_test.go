@@ -1,7 +1,10 @@
 // internal/stack/stack_test.go
 package stack
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestSlugify(t *testing.T) {
 	tests := []struct {
@@ -75,5 +78,28 @@ func TestParseStackBranch(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestGenerateStackFooter(t *testing.T) {
+	entries := []PREntry{
+		{Position: 1, PRNumber: 42, PRURL: "https://github.com/org/repo/pull/42"},
+		{Position: 2, PRNumber: 43, PRURL: "https://github.com/org/repo/pull/43"},
+		{Position: 3, PRNumber: 44, PRURL: "https://github.com/org/repo/pull/44"},
+	}
+
+	footer := GenerateStackFooter("feature/auth", entries, 2)
+
+	if !strings.Contains(footer, "feature/auth") {
+		t.Error("footer should contain stack ID")
+	}
+	if !strings.Contains(footer, "(2/3)") {
+		t.Error("footer should contain position")
+	}
+	if !strings.Contains(footer, "#42") {
+		t.Error("footer should reference previous PR")
+	}
+	if !strings.Contains(footer, "#44") {
+		t.Error("footer should reference next PR")
 	}
 }
