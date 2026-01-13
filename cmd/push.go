@@ -444,7 +444,8 @@ func runPush(cmd *cobra.Command, args []string) error {
 		}
 
 		total := len(entries)
-		prTitle := stack.GeneratePRTitle(entry.CommitMsg, entry.Position, total)
+		stackIndex := i + 1 // 1-based index for display (stack order, not branch position)
+		prTitle := stack.GeneratePRTitle(entry.CommitMsg, stackIndex, total)
 
 		if entry.PRNumber > 0 {
 			// Existing PR - branch was already pushed above
@@ -466,7 +467,7 @@ func runPush(cmd *cobra.Command, args []string) error {
 			}
 		} else {
 			// Create new PR
-			prBody := stack.GeneratePRBody(entry.CommitMsg, entry.CommitBody, currentBranch, entries, entry.Position)
+			prBody := stack.GeneratePRBody(entry.CommitMsg, entry.CommitBody, currentBranch, entries, stackIndex)
 			pr, err := gh.CreatePullRequest(github.CreatePullRequestInput{
 				Title: prTitle,
 				Body:  prBody,
@@ -492,7 +493,7 @@ func runPush(cmd *cobra.Command, args []string) error {
 	if !jsonOutput {
 		fmt.Println("\nUpdating PR metadata...")
 	}
-	for _, entry := range entries {
+	for i, entry := range entries {
 		if entry.PRNumber > 0 {
 			// Fetch current PR to check existing title/body
 			currentPR, err := gh.GetPullRequest(entry.PRNumber)
@@ -503,11 +504,13 @@ func runPush(cmd *cobra.Command, args []string) error {
 				continue
 			}
 
+			stackIndex := i + 1 // 1-based index for display (stack order, not branch position)
+
 			// Update title (only changes [X/N] prefix, preserves rest)
-			newTitle, titleChanged := stack.UpdatePRTitle(currentPR.Title, entry.Position, len(entries))
+			newTitle, titleChanged := stack.UpdatePRTitle(currentPR.Title, stackIndex, len(entries))
 
 			// Update body (preserves user content, updates stack footer)
-			newBody := stack.UpdatePRBody(currentPR.Body, currentBranch, entries, entry.Position)
+			newBody := stack.UpdatePRBody(currentPR.Body, currentBranch, entries, stackIndex)
 			bodyChanged := newBody != currentPR.Body
 
 			// Only call API if something actually changed

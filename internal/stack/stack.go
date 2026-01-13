@@ -180,20 +180,27 @@ func GenerateStackFooter(stackID string, entries []PREntry, currentPosition int)
 	return generateStackFooter(stackID, entries, currentPosition)
 }
 
-func generateStackFooter(stackID string, entries []PREntry, currentPosition int) string {
+func generateStackFooter(stackID string, entries []PREntry, currentIndex int) string {
 	total := len(entries)
 	var prev, next string
 
-	for _, e := range entries {
-		if e.Position == currentPosition-1 && e.PRNumber > 0 {
+	// currentIndex is 1-based, entries array is 0-based
+	// Previous entry is at entries[currentIndex-2] (if currentIndex > 1)
+	// Next entry is at entries[currentIndex] (if currentIndex < total)
+	if currentIndex > 1 {
+		e := entries[currentIndex-2]
+		if e.PRNumber > 0 {
 			prev = fmt.Sprintf("[#%d](%s)", e.PRNumber, e.PRURL)
 		}
-		if e.Position == currentPosition+1 && e.PRNumber > 0 {
+	}
+	if currentIndex < total {
+		e := entries[currentIndex]
+		if e.PRNumber > 0 {
 			next = fmt.Sprintf("[#%d](%s)", e.PRNumber, e.PRURL)
 		}
 	}
 
-	parts := []string{fmt.Sprintf("`%s` (%d/%d)", stackID, currentPosition, total)}
+	parts := []string{fmt.Sprintf("`%s` (%d/%d)", stackID, currentIndex, total)}
 	if prev != "" {
 		parts = append(parts, "← "+prev)
 	}
