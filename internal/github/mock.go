@@ -163,11 +163,22 @@ func (m *MockGitHub) AddExistingPR(branch string, number int, title string) {
 
 // AddExistingPRWithState sets up an existing PR for a branch with a specific state
 func (m *MockGitHub) AddExistingPRWithState(branch string, number int, title string, state string) {
+	m.AddExistingPRFull(branch, number, title, state, false)
+}
+
+// AddMergedPR sets up a merged PR for a branch
+func (m *MockGitHub) AddMergedPR(branch string, number int, title string) {
+	m.AddExistingPRFull(branch, number, title, "closed", true)
+}
+
+// AddExistingPRFull sets up a PR with full control over state and merged flag
+func (m *MockGitHub) AddExistingPRFull(branch string, number int, title string, state string, merged bool) {
 	pr := PullRequest{
 		Number: number,
 		URL:    fmt.Sprintf("https://github.com/%s/%s/pull/%d", m.Repo.Owner, m.Repo.Name, number),
 		Title:  title,
 		State:  state,
+		Merged: merged,
 	}
 	pr.Head.Ref = branch
 	m.PRs[branch] = append(m.PRs[branch], pr)

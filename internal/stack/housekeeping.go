@@ -16,6 +16,7 @@ type StackEntry struct {
 	PRNumber    int    // PR number (0 if no PR)
 	PRURL       string
 	PRState     string // "open", "merged", "closed"
+	PRMerged    bool   // true if PR was merged (vs just closed)
 	Status      string // "matched", "local_only", "remote_only", "orphaned", "dangling"
 	CommitIndex int    // Index in local commit list (for sorting)
 }
@@ -24,7 +25,8 @@ type StackEntry struct {
 type PRInfo struct {
 	Number int
 	URL    string
-	State  string
+	State  string // "open" or "closed" (REST API state)
+	Merged bool   // true if PR was merged (not just closed)
 	Base   string
 }
 
@@ -116,24 +118,28 @@ func AnalyzeStack(
 		}
 	}
 
-	// Third pass: find orphaned branches (have branches but PRs are merged/closed)
+	// Third pass: find orphaned branches (have branches but PRs are merged)
+	// NOTE: Only consider PRs that were actually MERGED as orphaned.
+	// Closed-without-merging PRs should NOT be cleaned up - the user may want to reopen them.
 	for _, eb := range existingBranches {
 		if matchedBranches[eb.Branch] {
 			continue
 		}
 		pr := branchPRs[eb.Branch]
-		if pr != nil && pr.State != "open" {
+		if pr != nil && pr.Merged {
+			// PR was merged - this branch can be safely deleted
 			entries = append(entries, StackEntry{
 				Position:    eb.Position,
 				Branch:      eb.Branch,
 				PRNumber:    pr.Number,
 				PRURL:       pr.URL,
-				PRState:     pr.State,
+				PRState:     "merged",
+				PRMerged:    true,
 				Status:      "orphaned",
 				CommitIndex: len(commits) + 1000 + eb.Position, // Sort at end
 			})
 		} else if pr == nil {
-			// Branch exists but no PR at all
+			// Branch exists but no PR at all - safe to delete
 			entries = append(entries, StackEntry{
 				Position:    eb.Position,
 				Branch:      eb.Branch,
@@ -141,6 +147,7 @@ func AnalyzeStack(
 				CommitIndex: len(commits) + 1000 + eb.Position,
 			})
 		}
+		// Note: closed-but-not-merged PRs are intentionally NOT marked as orphaned
 	}
 
 	// Sort by commit index (preserves chronological order)

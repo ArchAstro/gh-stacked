@@ -111,6 +111,7 @@ type PullRequest struct {
 	Body      string `json:"body"`
 	URL       string `json:"html_url"`
 	State     string `json:"state"`
+	Merged    bool   `json:"merged"`
 	Mergeable bool   `json:"mergeable"`
 	Head      struct {
 		Ref string `json:"ref"`

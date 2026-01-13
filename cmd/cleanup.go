@@ -102,6 +102,7 @@ func runCleanup(cmd *cobra.Command, args []string) error {
 			Number: pr.Number,
 			URL:    pr.URL,
 			State:  pr.State,
+			Merged: pr.Merged,
 			Base:   pr.Base.Ref,
 		}, nil
 	}
