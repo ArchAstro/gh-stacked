@@ -177,44 +177,28 @@ func runMerge(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("no stack branches found - run 'gh stacked push' first")
 	}
 
-	// Find the minimum position (first in stack that can be merged)
-	minPosition := stack.FindMinPosition(existingBranches)
-
-	// Validate: positions must start from minPosition and be contiguous
-	for i, pos := range positions {
-		expectedPos := minPosition + i
-		if pos != expectedPos {
+	// positions are now interpreted as 1-based stack indices (order in stack, not branch position numbers)
+	// Validate: indices must start from 1 and be contiguous
+	for i, idx := range positions {
+		expectedIdx := 1 + i
+		if idx != expectedIdx {
 			if i == 0 {
-				// First position doesn't match minimum
-				var minCommitMsg string
-				for _, eb := range existingBranches {
-					if eb.Position == minPosition {
-						minCommitMsg = eb.Slug
-						break
-					}
-				}
-				return fmt.Errorf(`cannot merge position %d - position %d must be merged first
+				// First index doesn't start at 1
+				return fmt.Errorf(`cannot merge stack position %d - must start from position 1
 
 Stack order:
-  #%d [OPEN] %s <- merge this first
+  #1 [OPEN] %s <- merge this first
   #%d [OPEN] ... <- you tried to merge this
 
 Use 'gh stacked status' to see the current stack.`,
-					pos, minPosition, minPosition, minCommitMsg, pos)
+					idx, existingBranches[0].Slug, idx)
 			}
 			// Gap in range
-			return fmt.Errorf("positions must be contiguous: expected %d but got %d", expectedPos, pos)
+			return fmt.Errorf("positions must be contiguous: expected %d but got %d", expectedIdx, idx)
 		}
-		// Verify position exists
-		found := false
-		for _, eb := range existingBranches {
-			if eb.Position == pos {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return fmt.Errorf("position %d not found in stack", pos)
+		// Verify index is within range
+		if idx > len(existingBranches) {
+			return fmt.Errorf("position %d not found in stack (stack has %d PRs)", idx, len(existingBranches))
 		}
 	}
 
@@ -224,29 +208,21 @@ Use 'gh stacked status' to see the current stack.`,
 		return fmt.Errorf("failed to create GitHub client: %w", err)
 	}
 
-	// Build map of position -> branch info for quick lookup
-	branchByPosition := make(map[int]*stack.ExistingBranchInfo)
-	for i := range existingBranches {
-		branchByPosition[existingBranches[i].Position] = &existingBranches[i]
-	}
-
 	// Collect PRs to merge (validate they all exist and are open)
+	// positions are 1-based stack indices, so existingBranches[idx-1] gives the branch
 	type prToMerge struct {
-		Position int
-		Branch   *stack.ExistingBranchInfo
-		PR       github.PullRequest
+		StackIndex int // 1-based index in stack
+		Branch     *stack.ExistingBranchInfo
+		PR         github.PullRequest
 	}
 	var prsToMerge []prToMerge
 
-	for _, pos := range positions {
-		branch := branchByPosition[pos]
-		if branch == nil {
-			return fmt.Errorf("no branch found for position %d", pos)
-		}
+	for _, idx := range positions {
+		branch := &existingBranches[idx-1] // Convert 1-based index to 0-based
 
 		prs, err := gh.ListPullRequests(branch.Branch)
 		if err != nil {
-			return fmt.Errorf("failed to find PR for position %d: %w", pos, err)
+			return fmt.Errorf("failed to find PR for stack position %d: %w", idx, err)
 		}
 		if len(prs) == 0 {
 			// Check if there's a merged/closed PR for this branch
@@ -254,28 +230,29 @@ Use 'gh stacked status' to see the current stack.`,
 			if err == nil && len(allPRs) > 0 {
 				pr := allPRs[0]
 				if pr.State == "closed" {
-					return fmt.Errorf(`PR #%d for position %d is already closed/merged
+					return fmt.Errorf(`PR #%d for stack position %d is already closed/merged
 
 The stack is out of sync. To fix:
   git fetch origin
   git rebase origin/%s
   gh stacked push
 
-This will sync your local branch with the merged changes.`, pr.Number, pos, strings.TrimPrefix(baseBranch, "origin/"))
+This will sync your local branch with the merged changes.`, pr.Number, idx, strings.TrimPrefix(baseBranch, "origin/"))
 				}
 			}
 			return fmt.Errorf("no open PR found for branch %s - run 'gh stacked push' first", branch.Branch)
 		}
 
 		prsToMerge = append(prsToMerge, prToMerge{
-			Position: pos,
-			Branch:   branch,
-			PR:       prs[0],
+			StackIndex: idx,
+			Branch:     branch,
+			PR:         prs[0],
 		})
 	}
 
-	// Find positions that will remain after merge
-	maxMergePosition := positions[len(positions)-1]
+	// Find how many will remain after merge
+	// positions contains 1-based stack indices, so maxMergeIndex is the highest being merged
+	maxMergeIndex := positions[len(positions)-1]
 	remainingCommitCount := len(commits) - len(positions)
 
 	// Pre-flight check: If we'll need to rebase, verify it won't conflict
@@ -333,7 +310,7 @@ Then retry: gh stacked merge %s`, rebaseTarget, rebaseTarget, args[0])
 	for _, pm := range prsToMerge {
 		err = gh.MergePullRequest(pm.PR.Number)
 		if err != nil {
-			return fmt.Errorf("failed to merge PR #%d (position %d): %w", pm.PR.Number, pm.Position, err)
+			return fmt.Errorf("failed to merge PR #%d (stack position %d): %w", pm.PR.Number, pm.StackIndex, err)
 		}
 
 		output.Merged = append(output.Merged, pm.PR.Number)
@@ -343,34 +320,23 @@ Then retry: gh stacked merge %s`, rebaseTarget, rebaseTarget, args[0])
 		}
 	}
 
-	// Find the next position after all merged ones to retarget to base
-	var nextPosition int
-	for _, eb := range existingBranches {
-		if eb.Position > maxMergePosition {
-			if nextPosition == 0 || eb.Position < nextPosition {
-				nextPosition = eb.Position
-			}
-		}
-	}
-
 	// If there are remaining commits, update them
 	if remainingCommitCount > 0 && !mergeNoRebase {
 		// Retarget next PR to base branch
-		if nextPosition > 0 {
-			nextBranch := branchByPosition[nextPosition]
-			if nextBranch != nil {
-				nextPRs, err := gh.ListPullRequests(nextBranch.Branch)
-				if err == nil && len(nextPRs) > 0 {
-					targetBase := strings.TrimPrefix(baseBranch, "origin/")
-					err = gh.UpdatePullRequestBase(nextPRs[0].Number, targetBase)
-					if err != nil {
-						return fmt.Errorf("failed to retarget PR #%d: %w", nextPRs[0].Number, err)
-					}
-					output.Retargeted = append(output.Retargeted, nextPRs[0].Number)
+		// The next entry is at existingBranches[maxMergeIndex] (0-based: maxMergeIndex-1+1 = maxMergeIndex)
+		if maxMergeIndex < len(existingBranches) {
+			nextBranch := &existingBranches[maxMergeIndex]
+			nextPRs, err := gh.ListPullRequests(nextBranch.Branch)
+			if err == nil && len(nextPRs) > 0 {
+				targetBase := strings.TrimPrefix(baseBranch, "origin/")
+				err = gh.UpdatePullRequestBase(nextPRs[0].Number, targetBase)
+				if err != nil {
+					return fmt.Errorf("failed to retarget PR #%d: %w", nextPRs[0].Number, err)
+				}
+				output.Retargeted = append(output.Retargeted, nextPRs[0].Number)
 
-					if !jsonOutput {
-						fmt.Printf("Retargeted PR #%d to %s\n", nextPRs[0].Number, targetBase)
-					}
+				if !jsonOutput {
+					fmt.Printf("Retargeted PR #%d to %s\n", nextPRs[0].Number, targetBase)
 				}
 			}
 		}

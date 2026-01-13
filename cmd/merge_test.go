@@ -130,9 +130,9 @@ func TestRunMerge_MustMergeInOrder(t *testing.T) {
 		t.Fatal("expected error for out-of-order merge")
 	}
 
-	// Error message should mention that position 1 must be merged first
-	if !containsSubstring(err.Error(), "position 1 must be merged first") {
-		t.Errorf("expected error mentioning position 1 must be merged first, got %q", err.Error())
+	// Error message should mention must start from position 1
+	if !containsSubstring(err.Error(), "must start from position 1") {
+		t.Errorf("expected error mentioning must start from position 1, got %q", err.Error())
 	}
 }
 
@@ -274,14 +274,14 @@ func TestRunMerge_InvalidPRNumber(t *testing.T) {
 	defer func() { mergeNewGit = oldNewGit }()
 	mergeNewGit = func() git.GitOperations { return mockGit }
 
-	err := runMerge(nil, []string{"5"}) // Only position 1 exists
+	err := runMerge(nil, []string{"5"}) // Only 1 commit exists (stack position 1)
 	if err == nil {
 		t.Fatal("expected error for invalid PR number")
 	}
 
-	// Should fail because position 5 doesn't exist and 1 must be merged first
-	if !containsSubstring(err.Error(), "position 1 must be merged first") {
-		t.Errorf("expected error about merging position 1 first, got %q", err.Error())
+	// Should fail because stack position 5 doesn't exist and must start from position 1
+	if !containsSubstring(err.Error(), "must start from position 1") {
+		t.Errorf("expected error about must start from position 1, got %q", err.Error())
 	}
 }
 
@@ -727,8 +727,8 @@ func TestRunMerge_Position2AfterMerge(t *testing.T) {
 	mergeNewGitHub = func() (github.GitHubOperations, error) { return mockGH, nil }
 	mergeNoRebase = false
 
-	// Should be able to merge position 2 since it's now the first in the stack
-	err := runMerge(nil, []string{"2"})
+	// Should be able to merge position 1 (which is now "Add user API" since position 1 was removed from commits)
+	err := runMerge(nil, []string{"1"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -756,8 +756,8 @@ func TestRunMerge_Position2AfterMerge(t *testing.T) {
 	}
 }
 
-// TestRunMerge_Position3NotFirstErrors tests that merging position 3 when position 2 is first fails
-func TestRunMerge_Position3NotFirstErrors(t *testing.T) {
+// TestRunMerge_Position2NotFirstErrors tests that merging position 2 fails (must start from 1)
+func TestRunMerge_Position2NotFirstErrors(t *testing.T) {
 	mockGit := git.NewMockGit()
 	mockGit.CurrentBranch = "feature/auth"
 	mockGit.BaseBranch = "main"
@@ -765,7 +765,6 @@ func TestRunMerge_Position3NotFirstErrors(t *testing.T) {
 		{Hash: "def5678", Subject: "Add user API"},
 		{Hash: "ghi9012", Subject: "Add user tests"},
 	}
-	// Position 2 is first in stack
 	mockGit.RemoteBranches = []string{
 		"stack/feature/auth/02-add-user-api",
 		"stack/feature/auth/03-add-user-tests",
@@ -775,15 +774,15 @@ func TestRunMerge_Position3NotFirstErrors(t *testing.T) {
 	defer func() { mergeNewGit = oldNewGit }()
 	mergeNewGit = func() git.GitOperations { return mockGit }
 
-	// Try to merge position 3 when position 2 is first
-	err := runMerge(nil, []string{"3"})
+	// Try to merge stack position 2 (must start from 1)
+	err := runMerge(nil, []string{"2"})
 	if err == nil {
 		t.Fatal("expected error for out-of-order merge")
 	}
 
-	// Error should mention position 2 must be merged first
-	if !containsSubstring(err.Error(), "position 2 must be merged first") {
-		t.Errorf("expected error mentioning position 2 must be merged first, got %q", err.Error())
+	// Error should mention must start from position 1
+	if !containsSubstring(err.Error(), "must start from position 1") {
+		t.Errorf("expected error mentioning must start from position 1, got %q", err.Error())
 	}
 }
 
@@ -825,8 +824,8 @@ func TestRunMerge_IgnoresOrphanedBranches(t *testing.T) {
 	mergeNewGitHub = func() (github.GitHubOperations, error) { return mockGH, nil }
 	mergeNoRebase = true // Skip rebase for simplicity
 
-	// Should be able to merge position 3 (ignoring orphaned position 2)
-	err := runMerge(nil, []string{"3"})
+	// Should be able to merge stack position 1 (which matches branch position 3, ignoring orphaned)
+	err := runMerge(nil, []string{"1"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -869,8 +868,8 @@ func TestRunMerge_OrphanedBranchDoesNotBlockMerge(t *testing.T) {
 	mergeNewGitHub = func() (github.GitHubOperations, error) { return mockGH, nil }
 	mergeNoRebase = true
 
-	// Should be able to merge position 3 directly (orphaned 1 and 2 are ignored)
-	err := runMerge(nil, []string{"3"})
+	// Should be able to merge stack position 1 (which matches branch position 3, orphaned 1 and 2 are ignored)
+	err := runMerge(nil, []string{"1"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1081,7 +1080,7 @@ func TestRunMerge_RangeMustStartAtFirst(t *testing.T) {
 		t.Fatal("expected error when not starting from first position")
 	}
 
-	if !containsSubstring(err.Error(), "position 1 must be merged first") {
-		t.Errorf("expected error about merging position 1 first, got %q", err.Error())
+	if !containsSubstring(err.Error(), "must start from position 1") {
+		t.Errorf("expected error about starting from position 1, got %q", err.Error())
 	}
 }
