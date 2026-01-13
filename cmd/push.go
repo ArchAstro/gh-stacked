@@ -413,14 +413,17 @@ func runPush(cmd *cobra.Command, args []string) error {
 			if e.PRNumber > 0 {
 				actionIcon = "↑ update"
 				// OSC 8 hyperlink: \e]8;;URL\e\\TEXT\e]8;;\e\\
-				prStr = fmt.Sprintf("\033]8;;%s\033\\#%d\033]8;;\033\\", e.PRURL, e.PRNumber)
+				// Add padding AFTER escape sequence since Printf counts escape bytes
+				prText := fmt.Sprintf("#%d", e.PRNumber)
+				prLink := fmt.Sprintf("\033]8;;%s\033\\%s\033]8;;\033\\", e.PRURL, prText)
+				prStr = prLink + strings.Repeat(" ", max(0, 6-len(prText)))
 				// Check if PR will need retargeting
 				if e.CurrentBase != "" && e.CurrentBase != expectedBase {
 					actionIcon = "↻ retarget"
 				}
 			} else {
 				actionIcon = "✚ create"
-				prStr = "-"
+				prStr = fmt.Sprintf("%-6s", "-")
 			}
 
 			posStr := fmt.Sprintf("%d", e.Position)
@@ -430,7 +433,7 @@ func runPush(cmd *cobra.Command, args []string) error {
 				descStr = descStr[:42] + "..."
 			}
 
-			fmt.Printf("  %-3d %-12s %-8s %-8s %s\n", stackIndex, actionIcon, posStr, prStr, descStr)
+			fmt.Printf("  %-3d %-12s %-8s %s %s\n", stackIndex, actionIcon, posStr, prStr, descStr)
 		}
 
 		// Summary

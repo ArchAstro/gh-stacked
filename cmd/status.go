@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/calvin/gh-stacked/internal/git"
 	"github.com/calvin/gh-stacked/internal/github"
@@ -233,10 +234,13 @@ func runStatus(cmd *cobra.Command, args []string) error {
 
 		if pr.PRNumber > 0 {
 			// OSC 8 hyperlink: \e]8;;URL\e\\TEXT\e]8;;\e\\
-			prStr = fmt.Sprintf("\033]8;;%s\033\\#%d\033]8;;\033\\", pr.PRURL, pr.PRNumber)
+			// Add padding AFTER escape sequence since Printf counts escape bytes
+			prText := fmt.Sprintf("#%d", pr.PRNumber)
+			prLink := fmt.Sprintf("\033]8;;%s\033\\%s\033]8;;\033\\", pr.PRURL, prText)
+			prStr = prLink + strings.Repeat(" ", 6-len(prText))
 			diffStr = fmt.Sprintf("+%d -%d", pr.Additions, pr.Deletions)
 		} else {
-			prStr = "-"
+			prStr = fmt.Sprintf("%-6s", "-")
 			diffStr = ""
 		}
 
@@ -245,7 +249,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 			descStr = descStr[:42] + "..."
 		}
 
-		fmt.Printf("  %-3d %-12s %-8s %-8s %-45s %s\n", stackIndex, statusIcon, posStr, prStr, descStr, diffStr)
+		fmt.Printf("  %-3d %-12s %-8s %s %-45s %s\n", stackIndex, statusIcon, posStr, prStr, descStr, diffStr)
 	}
 
 	// Summary

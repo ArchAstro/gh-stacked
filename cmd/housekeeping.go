@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/calvin/gh-stacked/internal/git"
 	"github.com/calvin/gh-stacked/internal/github"
@@ -134,12 +135,15 @@ func runHousekeeping(cmd *cobra.Command, args []string) error {
 
 		if e.PRNumber > 0 {
 			// OSC 8 hyperlink: \e]8;;URL\e\\TEXT\e]8;;\e\\
-			prStr = fmt.Sprintf("\033]8;;%s\033\\#%d\033]8;;\033\\", e.PRURL, e.PRNumber)
+			// Add padding AFTER escape sequence since Printf counts escape bytes
+			prText := fmt.Sprintf("#%d", e.PRNumber)
 			if e.PRState != "open" {
-				prStr += fmt.Sprintf(" (%s)", e.PRState)
+				prText += fmt.Sprintf(" (%s)", e.PRState)
 			}
+			prLink := fmt.Sprintf("\033]8;;%s\033\\%s\033]8;;\033\\", e.PRURL, prText)
+			prStr = prLink + strings.Repeat(" ", max(0, 8-len(prText)))
 		} else {
-			prStr = "-"
+			prStr = fmt.Sprintf("%-8s", "-")
 		}
 
 		if e.CommitHash != "" {
@@ -167,7 +171,7 @@ func runHousekeeping(cmd *cobra.Command, args []string) error {
 			statusIcon = "✗ orphaned"
 		}
 
-		fmt.Printf("  %-3d %-12s %-8s %-8s %s\n", i+1, statusIcon, posStr, prStr, descStr)
+		fmt.Printf("  %-3d %-12s %-8s %s %s\n", i+1, statusIcon, posStr, prStr, descStr)
 	}
 
 	// Print summary
