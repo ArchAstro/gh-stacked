@@ -25,19 +25,24 @@ type AmendOutput struct {
 }
 
 var amendCmd = &cobra.Command{
-	Use:   "amend <pr-number>",
+	Use:   "amend <position>",
 	Short: "Amend a specific PR with staged changes",
 	Long: `Amend a specific PR in the stack with your staged changes.
 
+Use 'gh stacked status' to see the current stack positions (1, 2, 3, ...).
+
 This command:
-  1. Creates a fixup commit targeting the specified PR's commit
+  1. Creates a fixup commit targeting the specified position's commit
   2. Runs an autosquash rebase to fold it in
   3. Force-pushes all affected PR branches
 
 You must stage your changes before running this command.`,
-	Example: `  # Fix PR 2 after code review
+	Example: `  # Fix position 2 after code review
   git add .
-  gh stacked amend 2`,
+  gh stacked amend 2
+
+  # Check positions first
+  gh stacked status`,
 	Args: cobra.ExactArgs(1),
 	RunE: runAmend,
 }
@@ -48,9 +53,13 @@ func init() {
 }
 
 func runAmend(cmd *cobra.Command, args []string) error {
-	prPosition, err := strconv.Atoi(args[0])
+	// Stack index is 1-based (1, 2, 3...) matching what 'gh stacked status' shows
+	stackIndex, err := strconv.Atoi(args[0])
 	if err != nil {
-		return fmt.Errorf("invalid PR number: %s", args[0])
+		return fmt.Errorf("invalid stack position: %s", args[0])
+	}
+	if stackIndex <= 0 {
+		return fmt.Errorf("stack position must be positive (1, 2, 3, ...)")
 	}
 
 	g := amendNewGit()
@@ -91,6 +100,18 @@ func runAmend(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to get commits: %w", err)
 	}
 
+	if len(commits) == 0 {
+		return fmt.Errorf("no commits in stack")
+	}
+
+	if stackIndex > len(commits) {
+		return fmt.Errorf("stack position %d is out of range (stack has %d commits)", stackIndex, len(commits))
+	}
+
+	// Target index is 0-based
+	targetIdx := stackIndex - 1
+	targetCommit := commits[targetIdx]
+
 	if amendVerbose {
 		fmt.Printf("[verbose] Found %d commits in stack\n", len(commits))
 		fmt.Println("[verbose] Fetching remote branches...")
@@ -114,28 +135,11 @@ func runAmend(cmd *cobra.Command, args []string) error {
 		currentBranch,
 	)
 
-	// Find the commit that matches the requested position
-	var targetIdx int = -1
-	var targetCommit git.Commit
-	for i, cp := range commitPositions {
-		if cp.Position == prPosition {
-			targetIdx = i
-			targetCommit = commits[i]
-			break
-		}
-	}
-
-	if targetIdx == -1 {
-		// List available positions
-		var positions []int
-		for _, cp := range commitPositions {
-			positions = append(positions, cp.Position)
-		}
-		return fmt.Errorf("PR position %d not found in current stack (available: %v)", prPosition, positions)
-	}
+	// Get the branch position for the target commit
+	branchPosition := commitPositions[targetIdx].Position
 
 	if amendVerbose {
-		fmt.Printf("[verbose] Target commit: %s %s (position %d)\n", targetCommit.Hash[:7], targetCommit.Subject, prPosition)
+		fmt.Printf("[verbose] Target commit: %s %s (stack #%d, branch %d)\n", targetCommit.Hash[:7], targetCommit.Subject, stackIndex, branchPosition)
 	}
 
 	// Check if there's already a fixup commit at the top for this target
@@ -202,7 +206,7 @@ To amend manually:
   git rebase -i %s
   # move the target commit, edit it, apply your changes
   # then continue the rebase
-  gh stacked push`, targetCommit.Subject, baseBranch, prPosition, baseBranch)
+  gh stacked push`, targetCommit.Subject, baseBranch, stackIndex, baseBranch)
 	}
 
 	if amendVerbose {
@@ -242,18 +246,12 @@ To amend manually:
 		fmt.Printf("[verbose] Pushing %d affected branches...\n", affectedCount)
 	}
 
-	// Find the new target commit hash
-	var newTargetCommit git.Commit
-	for i, cp := range newCommitPositions {
-		if cp.Position == prPosition {
-			newTargetCommit = newCommits[i]
-			break
-		}
-	}
+	// The target commit is at the same index after rebase (order preserved, hashes changed)
+	newTargetCommit := newCommits[targetIdx]
 
 	// Push affected branches
 	output := AmendOutput{
-		Amended: prPosition,
+		Amended: stackIndex,
 		Commit:  newTargetCommit.Hash[:7],
 		Rebased: []int{},
 		Pushed:  []string{},
@@ -282,13 +280,13 @@ To amend manually:
 			return fmt.Errorf("failed to push %s: %w", cp.Branch, err)
 		}
 
-		if cp.Position != prPosition {
-			output.Rebased = append(output.Rebased, cp.Position)
+		if cp.Position != branchPosition {
+			output.Rebased = append(output.Rebased, i+1) // Use stack index in output
 		}
 		output.Pushed = append(output.Pushed, cp.Branch)
 
 		if !jsonOutput {
-			if cp.Position == prPosition {
+			if cp.Position == branchPosition {
 				fmt.Printf("Amended: %s\n", cp.Branch)
 			} else {
 				fmt.Printf("Rebased: %s\n", cp.Branch)
@@ -300,7 +298,7 @@ To amend manually:
 		return json.NewEncoder(os.Stdout).Encode(output)
 	}
 
-	fmt.Printf("\nAmended PR %d, rebased %d commits\n", prPosition, len(output.Rebased))
+	fmt.Printf("\nAmended stack position %d, rebased %d commits\n", stackIndex, len(output.Rebased))
 
 	return nil
 }
