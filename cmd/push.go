@@ -412,7 +412,8 @@ func runPush(cmd *cobra.Command, args []string) error {
 			var prStr string
 			if e.PRNumber > 0 {
 				actionIcon = "↑ update"
-				prStr = fmt.Sprintf("#%d", e.PRNumber)
+				// OSC 8 hyperlink: \e]8;;URL\e\\TEXT\e]8;;\e\\
+				prStr = fmt.Sprintf("\033]8;;%s\033\\#%d\033]8;;\033\\", e.PRURL, e.PRNumber)
 				// Check if PR will need retargeting
 				if e.CurrentBase != "" && e.CurrentBase != expectedBase {
 					actionIcon = "↻ retarget"

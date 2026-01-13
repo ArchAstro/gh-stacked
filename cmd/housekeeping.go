@@ -133,7 +133,8 @@ func runHousekeeping(cmd *cobra.Command, args []string) error {
 		}
 
 		if e.PRNumber > 0 {
-			prStr = fmt.Sprintf("#%d", e.PRNumber)
+			// OSC 8 hyperlink: \e]8;;URL\e\\TEXT\e]8;;\e\\
+			prStr = fmt.Sprintf("\033]8;;%s\033\\#%d\033]8;;\033\\", e.PRURL, e.PRNumber)
 			if e.PRState != "open" {
 				prStr += fmt.Sprintf(" (%s)", e.PRState)
 			}

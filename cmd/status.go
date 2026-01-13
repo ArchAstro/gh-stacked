@@ -232,7 +232,8 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		}
 
 		if pr.PRNumber > 0 {
-			prStr = fmt.Sprintf("#%d", pr.PRNumber)
+			// OSC 8 hyperlink: \e]8;;URL\e\\TEXT\e]8;;\e\\
+			prStr = fmt.Sprintf("\033]8;;%s\033\\#%d\033]8;;\033\\", pr.PRURL, pr.PRNumber)
 			diffStr = fmt.Sprintf("+%d -%d", pr.Additions, pr.Deletions)
 		} else {
 			prStr = "-"
