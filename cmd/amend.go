@@ -222,8 +222,21 @@ To amend manually:
 		currentBranch,
 	)
 
-	// Find affected commits (from targetIdx onwards)
-	affectedCount := len(newCommits) - targetIdx
+	// Check if commits before targetIdx also changed (happens when base branch moved)
+	// If so, we need to push ALL branches, not just from targetIdx onwards
+	startIdx := targetIdx
+	for i := 0; i < targetIdx && i < len(newCommits) && i < len(commits); i++ {
+		if newCommits[i].Hash != commits[i].Hash {
+			// Base moved, all commits changed - need to push from beginning
+			startIdx = 0
+			if amendVerbose {
+				fmt.Println("[verbose] Base branch moved - all commits have new hashes")
+			}
+			break
+		}
+	}
+
+	affectedCount := len(newCommits) - startIdx
 	if amendVerbose {
 		fmt.Printf("[verbose] Found %d commits after rebase\n", len(newCommits))
 		fmt.Printf("[verbose] Pushing %d affected branches...\n", affectedCount)
@@ -238,7 +251,7 @@ To amend manually:
 		}
 	}
 
-	// Push affected branches (from amended position onward)
+	// Push affected branches
 	output := AmendOutput{
 		Amended: prPosition,
 		Commit:  newTargetCommit.Hash[:7],
@@ -246,8 +259,8 @@ To amend manually:
 		Pushed:  []string{},
 	}
 
-	// Push all commits from targetIdx onwards
-	for i := targetIdx; i < len(newCommits); i++ {
+	// Push all commits from startIdx onwards (may be 0 if base moved)
+	for i := startIdx; i < len(newCommits); i++ {
 		commit := newCommits[i]
 		cp := newCommitPositions[i]
 
@@ -269,7 +282,7 @@ To amend manually:
 			return fmt.Errorf("failed to push %s: %w", cp.Branch, err)
 		}
 
-		if cp.Position > prPosition {
+		if cp.Position != prPosition {
 			output.Rebased = append(output.Rebased, cp.Position)
 		}
 		output.Pushed = append(output.Pushed, cp.Branch)
