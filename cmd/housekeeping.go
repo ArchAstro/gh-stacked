@@ -120,7 +120,7 @@ func runHousekeeping(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Base: %s\n\n", baseBranch)
 
 	// Print table header
-	fmt.Println("  #   Status       Position  PR       Commit/Branch")
+	fmt.Println("  #   Status       Branch    PR       Commit/Branch")
 	fmt.Println("  ─── ──────────── ──────── ──────── ─────────────────────────────────────────")
 
 	for i, e := range entries {

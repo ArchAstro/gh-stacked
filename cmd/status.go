@@ -198,7 +198,56 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		return json.NewEncoder(os.Stdout).Encode(output)
 	}
 
-	// Count by status
+	// Human-readable output - table format matching housekeeping
+	fmt.Printf("Stack: %s\n", output.StackID)
+	fmt.Printf("Base: %s\n\n", baseBranch)
+
+	// Print table header
+	fmt.Println("  #   Status       Branch    PR       Commit                                    +/-")
+	fmt.Println("  ─── ──────────── ──────── ──────── ───────────────────────────────────────── ─────────")
+
+	for i, pr := range output.PRs {
+		stackIndex := i + 1 // 1-based index
+
+		var statusIcon string
+		if pr.PRNumber > 0 {
+			if pr.Mergeable && pr.ChecksPassing {
+				statusIcon = "✓ mergeable"
+			} else if pr.ChangesRequested {
+				statusIcon = "✗ blocked"
+			} else {
+				statusIcon = "⏳ waiting"
+			}
+		} else if pr.Status == "dangling" {
+			statusIcon = "✗ dangling"
+		} else {
+			statusIcon = "⚠ local"
+		}
+
+		var posStr, prStr, diffStr string
+		if pr.Position > 0 {
+			posStr = fmt.Sprintf("%d", pr.Position)
+		} else {
+			posStr = "-"
+		}
+
+		if pr.PRNumber > 0 {
+			prStr = fmt.Sprintf("#%d", pr.PRNumber)
+			diffStr = fmt.Sprintf("+%d -%d", pr.Additions, pr.Deletions)
+		} else {
+			prStr = "-"
+			diffStr = ""
+		}
+
+		descStr := fmt.Sprintf("%s %s", pr.Commit, pr.Title)
+		if len(descStr) > 45 {
+			descStr = descStr[:42] + "..."
+		}
+
+		fmt.Printf("  %-3d %-12s %-8s %-8s %-45s %s\n", stackIndex, statusIcon, posStr, prStr, descStr, diffStr)
+	}
+
+	// Summary
 	matchedCount := 0
 	localOnlyCount := 0
 	danglingCount := 0
@@ -213,65 +262,23 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Human-readable output
-	fmt.Printf("Stack: %s (%d commits", output.StackID, len(output.PRs))
+	fmt.Println()
+	fmt.Println("Summary:")
+	fmt.Printf("  Commits: %d\n", len(output.PRs))
 	if matchedCount > 0 {
-		fmt.Printf(", %d with PRs", matchedCount)
+		fmt.Printf("  With PRs: %d\n", matchedCount)
 	}
 	if localOnlyCount > 0 {
-		fmt.Printf(", %d local only", localOnlyCount)
+		fmt.Printf("  Local only (run 'gh stacked push'): %d\n", localOnlyCount)
 	}
 	if danglingCount > 0 {
-		fmt.Printf(", %d dangling", danglingCount)
-	}
-	fmt.Println(")")
-	fmt.Println()
-
-	for _, pr := range output.PRs {
-		var status string
-		var posStr string
-
-		if pr.PRNumber > 0 {
-			if pr.Mergeable && pr.ChecksPassing {
-				status = "MERGEABLE"
-			} else if pr.ChangesRequested {
-				status = "BLOCKED"
-			} else {
-				status = "WAITING"
-			}
-			posStr = fmt.Sprintf("#%d", pr.Position)
-		} else if pr.Status == "dangling" {
-			status = "DANGLING"
-			posStr = " -"
-		} else {
-			status = "LOCAL"
-			posStr = " -"
-		}
-
-		fmt.Printf("  %s [%s] %s\n", posStr, status, pr.Title)
-		if pr.PRNumber > 0 {
-			fmt.Printf("     PR #%d: %s\n", pr.PRNumber, pr.PRURL)
-			target := pr.TargetBranch
-			if target == "" {
-				target = baseBranch
-			}
-			fmt.Printf("     → %s | +%d -%d\n", target, pr.Additions, pr.Deletions)
-		} else if pr.Status == "dangling" {
-			fmt.Printf("     (run 'gh stacked cleanup' to remove)\n")
-		} else {
-			fmt.Printf("     (run 'gh stacked push' to create PR)\n")
-		}
-		fmt.Println()
+		fmt.Printf("  Dangling (run 'gh stacked cleanup'): %d\n", danglingCount)
 	}
 
-	if output.LocalInSync && syncWarning == "" {
-		fmt.Println("Local: in sync ✓")
-	} else if syncWarning != "" {
-		fmt.Println("Local: needs sync ⚠")
+	if syncWarning != "" {
 		fmt.Println()
+		fmt.Println("Sync status:")
 		fmt.Print(syncWarning)
-	} else {
-		fmt.Println("Local: out of sync")
 	}
 
 	return nil

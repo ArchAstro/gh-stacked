@@ -378,10 +378,10 @@ func runPush(cmd *cobra.Command, args []string) error {
 	if pushPreview {
 		if jsonOutput {
 			out := struct {
-				StackID  string           `json:"stack_id"`
-				Base     string           `json:"base_branch"`
-				Commits  []stack.PREntry  `json:"commits"`
-				Existing map[int]int      `json:"existing_prs"`
+				StackID  string          `json:"stack_id"`
+				Base     string          `json:"base_branch"`
+				Commits  []stack.PREntry `json:"commits"`
+				Existing map[int]int     `json:"existing_prs"`
 			}{
 				StackID:  currentBranch,
 				Base:     baseBranch,
@@ -391,26 +391,68 @@ func runPush(cmd *cobra.Command, args []string) error {
 			return json.NewEncoder(os.Stdout).Encode(out)
 		}
 
-		fmt.Printf("Preview: %s → %s\n\n", currentBranch, baseBranch)
+		// Table format matching housekeeping
+		fmt.Printf("Stack: %s\n", currentBranch)
+		fmt.Printf("Base: %s\n\n", baseBranch)
+
+		// Print table header
+		fmt.Println("  #   Action       Branch    PR       Commit/Branch")
+		fmt.Println("  ─── ──────────── ──────── ──────── ─────────────────────────────────────────")
+
 		for i, e := range entries {
+			stackIndex := i + 1 // 1-based index
+
 			// Determine expected base for this PR
 			expectedBase := strings.TrimPrefix(baseBranch, "origin/")
 			if i > 0 {
 				expectedBase = entries[i-1].Branch
 			}
 
-			action := "CREATE"
-			retarget := ""
+			var actionIcon string
+			var prStr string
 			if e.PRNumber > 0 {
-				action = fmt.Sprintf("UPDATE #%d", e.PRNumber)
+				actionIcon = "↑ update"
+				prStr = fmt.Sprintf("#%d", e.PRNumber)
 				// Check if PR will need retargeting
 				if e.CurrentBase != "" && e.CurrentBase != expectedBase {
-					retarget = fmt.Sprintf(" (retarget: %s → %s)", e.CurrentBase, expectedBase)
+					actionIcon = "↻ retarget"
 				}
+			} else {
+				actionIcon = "✚ create"
+				prStr = "-"
 			}
-			fmt.Printf("  %d. [%s] %s%s\n", e.Position, action, e.CommitMsg, retarget)
-			fmt.Printf("     Branch: %s\n\n", e.Branch)
+
+			posStr := fmt.Sprintf("%d", e.Position)
+
+			descStr := fmt.Sprintf("%s %s", e.CommitHash[:7], e.CommitMsg)
+			if len(descStr) > 45 {
+				descStr = descStr[:42] + "..."
+			}
+
+			fmt.Printf("  %-3d %-12s %-8s %-8s %s\n", stackIndex, actionIcon, posStr, prStr, descStr)
 		}
+
+		// Summary
+		createCount := 0
+		updateCount := 0
+		for _, e := range entries {
+			if e.PRNumber > 0 {
+				updateCount++
+			} else {
+				createCount++
+			}
+		}
+
+		fmt.Println()
+		fmt.Println("Summary:")
+		fmt.Printf("  Total: %d\n", len(entries))
+		if createCount > 0 {
+			fmt.Printf("  To create: %d\n", createCount)
+		}
+		if updateCount > 0 {
+			fmt.Printf("  To update: %d\n", updateCount)
+		}
+
 		return nil
 	}
 
