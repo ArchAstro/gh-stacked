@@ -300,7 +300,7 @@ Then retry: gh stacked merge %s`, rebaseTarget, rebaseTarget, args[0])
 		}
 	}
 
-	// Now safe to merge - merge each PR in order
+	// Now safe to merge
 	output := MergeOutput{
 		Merged:          []int{},
 		Retargeted:      []int{},
@@ -309,6 +309,28 @@ Then retry: gh stacked merge %s`, rebaseTarget, rebaseTarget, args[0])
 		DeletedBranches: []string{},
 	}
 
+	// IMPORTANT: When merging multiple PRs (1-N), we must retarget PRs 2-N to main FIRST
+	// Otherwise PR #2 gets merged into branch #1 (not main), PR #3 into branch #2, etc.
+	// and the changes get lost when those branches are deleted.
+	targetBase := strings.TrimPrefix(baseBranch, "origin/")
+	if len(prsToMerge) > 1 {
+		if !jsonOutput {
+			fmt.Println("Retargeting PRs to base branch before merge...")
+		}
+		for i := 1; i < len(prsToMerge); i++ {
+			pm := prsToMerge[i]
+			err = gh.UpdatePullRequestBase(pm.PR.Number, targetBase)
+			if err != nil {
+				return fmt.Errorf("failed to retarget PR #%d to %s: %w", pm.PR.Number, targetBase, err)
+			}
+			output.Retargeted = append(output.Retargeted, pm.PR.Number)
+			if !jsonOutput {
+				fmt.Printf("  Retargeted PR #%d to %s\n", pm.PR.Number, targetBase)
+			}
+		}
+	}
+
+	// Merge each PR in order (all now target main)
 	for _, pm := range prsToMerge {
 		err = gh.MergePullRequest(pm.PR.Number)
 		if err != nil {
@@ -338,7 +360,6 @@ Then retry: gh stacked merge %s`, rebaseTarget, rebaseTarget, args[0])
 					fmt.Printf("Warning: no open PR found for %s\n", nextBranch.Branch)
 				}
 			} else {
-				targetBase := strings.TrimPrefix(baseBranch, "origin/")
 				err = gh.UpdatePullRequestBase(nextPRs[0].Number, targetBase)
 				if err != nil {
 					return fmt.Errorf("failed to retarget PR #%d: %w", nextPRs[0].Number, err)
