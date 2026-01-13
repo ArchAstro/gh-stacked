@@ -3,6 +3,7 @@ package cmd
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/calvin/gh-stacked/internal/git"
@@ -1082,5 +1083,221 @@ func TestRunMerge_RangeMustStartAtFirst(t *testing.T) {
 
 	if !containsSubstring(err.Error(), "must start from position 1") {
 		t.Errorf("expected error about starting from position 1, got %q", err.Error())
+	}
+}
+
+// TestRunMerge_RangeRetargetsBeforeMerge tests that when merging multiple PRs,
+// PRs 2-N are retargeted to main BEFORE any merging happens.
+// This is critical because otherwise PR #2 would be merged into branch #1 (not main).
+func TestRunMerge_RangeRetargetsBeforeMerge(t *testing.T) {
+	mockGit := git.NewMockGit()
+	mockGit.CurrentBranch = "feature/auth"
+	mockGit.BaseBranch = "main"
+	mockGit.Commits = []git.Commit{
+		{Hash: "abc1234", Subject: "Add user model"},
+		{Hash: "def5678", Subject: "Add user API"},
+		{Hash: "ghi9012", Subject: "Add user tests"},
+	}
+	mockGit.RemoteBranches = []string{
+		"stack/feature/auth/01-add-user-model",
+		"stack/feature/auth/02-add-user-api",
+		"stack/feature/auth/03-add-user-tests",
+	}
+
+	mockGH := github.NewMockGitHub()
+	mockGH.AddExistingPR("stack/feature/auth/01-add-user-model", 100, "Add user model")
+	mockGH.AddExistingPR("stack/feature/auth/02-add-user-api", 101, "Add user API")
+	mockGH.AddExistingPR("stack/feature/auth/03-add-user-tests", 102, "Add user tests")
+
+	oldNewGit := mergeNewGit
+	oldNewGitHub := mergeNewGitHub
+	oldNoRebase := mergeNoRebase
+	defer func() {
+		mergeNewGit = oldNewGit
+		mergeNewGitHub = oldNewGitHub
+		mergeNoRebase = oldNoRebase
+	}()
+	mergeNewGit = func() git.GitOperations { return mockGit }
+	mergeNewGitHub = func() (github.GitHubOperations, error) { return mockGH, nil }
+	mergeNoRebase = true // Skip post-merge rebase for simplicity
+
+	// Merge all 3 PRs at once
+	err := runMerge(nil, []string{"1-3"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify PRs 101 and 102 were retargeted to main
+	retargetedPRs := make(map[int]string)
+	for _, call := range mockGH.Calls {
+		if call.Method == "UpdatePullRequestBase" {
+			if len(call.Args) >= 2 {
+				number, _ := call.Args[0].(int)
+				base, _ := call.Args[1].(string)
+				retargetedPRs[number] = base
+			}
+		}
+	}
+
+	if retargetedPRs[101] != "main" {
+		t.Errorf("expected PR #101 retargeted to main, got %q", retargetedPRs[101])
+	}
+	if retargetedPRs[102] != "main" {
+		t.Errorf("expected PR #102 retargeted to main, got %q", retargetedPRs[102])
+	}
+
+	// Verify all 3 PRs were merged
+	if len(mockGH.MergedPRs) != 3 {
+		t.Errorf("expected 3 PRs merged, got %d", len(mockGH.MergedPRs))
+	}
+
+	// CRITICAL: Verify retargeting happened BEFORE merging
+	// Find the indices of the first retarget and first merge operations
+	firstRetargetIdx := -1
+	firstMergeIdx := -1
+	for i, call := range mockGH.Calls {
+		if call.Method == "UpdatePullRequestBase" && firstRetargetIdx == -1 {
+			firstRetargetIdx = i
+		}
+		if call.Method == "MergePullRequest" && firstMergeIdx == -1 {
+			firstMergeIdx = i
+		}
+	}
+
+	if firstRetargetIdx == -1 {
+		t.Fatal("no retarget calls found")
+	}
+	if firstMergeIdx == -1 {
+		t.Fatal("no merge calls found")
+	}
+	if firstRetargetIdx > firstMergeIdx {
+		t.Errorf("retarget (index %d) should happen before merge (index %d)", firstRetargetIdx, firstMergeIdx)
+	}
+}
+
+// TestRunMerge_RangeAllRetargetedBeforeAnyMerge verifies that ALL retargets
+// happen before ANY merges when merging a range
+func TestRunMerge_RangeAllRetargetedBeforeAnyMerge(t *testing.T) {
+	mockGit := git.NewMockGit()
+	mockGit.CurrentBranch = "feature/auth"
+	mockGit.BaseBranch = "main"
+	mockGit.Commits = []git.Commit{
+		{Hash: "abc1234", Subject: "Add user model"},
+		{Hash: "def5678", Subject: "Add user API"},
+		{Hash: "ghi9012", Subject: "Add user tests"},
+		{Hash: "jkl3456", Subject: "Add user docs"},
+	}
+	mockGit.RemoteBranches = []string{
+		"stack/feature/auth/01-add-user-model",
+		"stack/feature/auth/02-add-user-api",
+		"stack/feature/auth/03-add-user-tests",
+		"stack/feature/auth/04-add-user-docs",
+	}
+
+	mockGH := github.NewMockGitHub()
+	mockGH.AddExistingPR("stack/feature/auth/01-add-user-model", 100, "Add user model")
+	mockGH.AddExistingPR("stack/feature/auth/02-add-user-api", 101, "Add user API")
+	mockGH.AddExistingPR("stack/feature/auth/03-add-user-tests", 102, "Add user tests")
+	mockGH.AddExistingPR("stack/feature/auth/04-add-user-docs", 103, "Add user docs")
+
+	oldNewGit := mergeNewGit
+	oldNewGitHub := mergeNewGitHub
+	oldNoRebase := mergeNoRebase
+	defer func() {
+		mergeNewGit = oldNewGit
+		mergeNewGitHub = oldNewGitHub
+		mergeNoRebase = oldNoRebase
+	}()
+	mergeNewGit = func() git.GitOperations { return mockGit }
+	mergeNewGitHub = func() (github.GitHubOperations, error) { return mockGH, nil }
+	mergeNoRebase = true
+
+	// Merge all 4 PRs at once
+	err := runMerge(nil, []string{"1-4"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Track the order of operations
+	var operations []string
+	for _, call := range mockGH.Calls {
+		if call.Method == "UpdatePullRequestBase" {
+			number, _ := call.Args[0].(int)
+			operations = append(operations, fmt.Sprintf("retarget-%d", number))
+		}
+		if call.Method == "MergePullRequest" {
+			number, _ := call.Args[0].(int)
+			operations = append(operations, fmt.Sprintf("merge-%d", number))
+		}
+	}
+
+	// Expected order: retarget 101, retarget 102, retarget 103, merge 100, merge 101, merge 102, merge 103
+	expectedOrder := []string{
+		"retarget-101", "retarget-102", "retarget-103",
+		"merge-100", "merge-101", "merge-102", "merge-103",
+	}
+
+	if len(operations) != len(expectedOrder) {
+		t.Fatalf("expected %d operations, got %d: %v", len(expectedOrder), len(operations), operations)
+	}
+
+	for i, expected := range expectedOrder {
+		if operations[i] != expected {
+			t.Errorf("operation %d: expected %q, got %q\nFull order: %v", i, expected, operations[i], operations)
+		}
+	}
+}
+
+// TestRunMerge_SinglePRNoRetarget verifies that merging a single PR doesn't
+// do any retargeting of that PR (it already targets main)
+func TestRunMerge_SinglePRNoRetarget(t *testing.T) {
+	mockGit := git.NewMockGit()
+	mockGit.CurrentBranch = "feature/auth"
+	mockGit.BaseBranch = "main"
+	mockGit.Commits = []git.Commit{
+		{Hash: "abc1234", Subject: "Add user model"},
+		{Hash: "def5678", Subject: "Add user API"},
+	}
+	mockGit.RemoteBranches = []string{
+		"stack/feature/auth/01-add-user-model",
+		"stack/feature/auth/02-add-user-api",
+	}
+
+	mockGH := github.NewMockGitHub()
+	mockGH.AddExistingPR("stack/feature/auth/01-add-user-model", 100, "Add user model")
+	mockGH.AddExistingPR("stack/feature/auth/02-add-user-api", 101, "Add user API")
+
+	oldNewGit := mergeNewGit
+	oldNewGitHub := mergeNewGitHub
+	oldNoRebase := mergeNoRebase
+	defer func() {
+		mergeNewGit = oldNewGit
+		mergeNewGitHub = oldNewGitHub
+		mergeNoRebase = oldNoRebase
+	}()
+	mergeNewGit = func() git.GitOperations { return mockGit }
+	mergeNewGitHub = func() (github.GitHubOperations, error) { return mockGH, nil }
+	mergeNoRebase = false
+
+	// Merge only position 1
+	err := runMerge(nil, []string{"1"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify only PR #100 was merged
+	if len(mockGH.MergedPRs) != 1 || mockGH.MergedPRs[0] != 100 {
+		t.Errorf("expected only PR #100 merged, got %v", mockGH.MergedPRs)
+	}
+
+	// PR #100 should NOT have been retargeted (it already targets main)
+	// Only PR #101 should be retargeted (the remaining PR)
+	for _, call := range mockGH.Calls {
+		if call.Method == "UpdatePullRequestBase" {
+			number, _ := call.Args[0].(int)
+			if number == 100 {
+				t.Error("PR #100 should not be retargeted - it already targets main")
+			}
+		}
 	}
 }

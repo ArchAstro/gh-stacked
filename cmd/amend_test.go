@@ -11,8 +11,8 @@ import (
 func TestAmendCommand(t *testing.T) {
 	cmd := amendCmd
 
-	if cmd.Use != "amend <pr-number>" {
-		t.Errorf("expected Use 'amend <pr-number>', got %s", cmd.Use)
+	if cmd.Use != "amend <position>" {
+		t.Errorf("expected Use 'amend <position>', got %s", cmd.Use)
 	}
 
 	// Verify the command takes exactly 1 argument
@@ -167,8 +167,8 @@ func TestRunAmend_InvalidPRNumber(t *testing.T) {
 		t.Fatal("expected error for invalid PR number")
 	}
 
-	// Should indicate PR position not found
-	expectedSubstring := "PR position 5 not found"
+	// Should indicate stack position out of range
+	expectedSubstring := "stack position 5 is out of range"
 	if err.Error() == "" {
 		t.Error("expected non-empty error message")
 	}
@@ -232,7 +232,7 @@ func TestRunAmend_NonNumericArg(t *testing.T) {
 		t.Fatal("expected error for non-numeric argument")
 	}
 
-	expectedSubstring := "invalid PR number"
+	expectedSubstring := "invalid stack position"
 	if !containsSubstring(err.Error(), expectedSubstring) {
 		t.Errorf("expected error containing %q, got %q", expectedSubstring, err.Error())
 	}
