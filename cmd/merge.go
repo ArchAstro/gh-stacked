@@ -23,11 +23,12 @@ var (
 )
 
 type MergeOutput struct {
-	Merged       []int  `json:"merged"`
-	MergeCommit  string `json:"merge_commit,omitempty"`
-	Retargeted   []int  `json:"retargeted"`
-	Rebased      bool   `json:"rebased"`
-	RemainingPRs []int  `json:"remaining_prs"`
+	Merged          []int    `json:"merged"`
+	MergeCommit     string   `json:"merge_commit,omitempty"`
+	Retargeted      []int    `json:"retargeted"`
+	Rebased         bool     `json:"rebased"`
+	RemainingPRs    []int    `json:"remaining_prs"`
+	DeletedBranches []string `json:"deleted_branches"`
 }
 
 // parsePositionRange parses "4" or "4-6" into a slice of positions
@@ -301,10 +302,11 @@ Then retry: gh stacked merge %s`, rebaseTarget, rebaseTarget, args[0])
 
 	// Now safe to merge - merge each PR in order
 	output := MergeOutput{
-		Merged:       []int{},
-		Retargeted:   []int{},
-		Rebased:      false,
-		RemainingPRs: []int{},
+		Merged:          []int{},
+		Retargeted:      []int{},
+		Rebased:         false,
+		RemainingPRs:    []int{},
+		DeletedBranches: []string{},
 	}
 
 	for _, pm := range prsToMerge {
@@ -320,14 +322,22 @@ Then retry: gh stacked merge %s`, rebaseTarget, rebaseTarget, args[0])
 		}
 	}
 
-	// If there are remaining commits, update them
+	// IMPORTANT: Retarget remaining PRs BEFORE deleting branches
+	// Otherwise GitHub may close PRs whose base branch gets deleted
 	if remainingCommitCount > 0 && !mergeNoRebase {
-		// Retarget next PR to base branch
-		// The next entry is at existingBranches[maxMergeIndex] (0-based: maxMergeIndex-1+1 = maxMergeIndex)
+		// Retarget next PR to base branch (it was targeting the last merged PR's branch)
 		if maxMergeIndex < len(existingBranches) {
 			nextBranch := &existingBranches[maxMergeIndex]
 			nextPRs, err := gh.ListPullRequests(nextBranch.Branch)
-			if err == nil && len(nextPRs) > 0 {
+			if err != nil {
+				if !jsonOutput {
+					fmt.Printf("Warning: could not find PR for %s: %v\n", nextBranch.Branch, err)
+				}
+			} else if len(nextPRs) == 0 {
+				if !jsonOutput {
+					fmt.Printf("Warning: no open PR found for %s\n", nextBranch.Branch)
+				}
+			} else {
 				targetBase := strings.TrimPrefix(baseBranch, "origin/")
 				err = gh.UpdatePullRequestBase(nextPRs[0].Number, targetBase)
 				if err != nil {
@@ -340,6 +350,40 @@ Then retry: gh stacked merge %s`, rebaseTarget, rebaseTarget, args[0])
 				}
 			}
 		}
+	}
+
+	// Clean up merged branches (remote and local) - AFTER retargeting
+	if !jsonOutput && len(prsToMerge) > 0 {
+		fmt.Println("Cleaning up merged branches...")
+	}
+	for _, pm := range prsToMerge {
+		branchName := pm.Branch.Branch
+
+		// Delete remote branch
+		err := g.PushBranch("origin", ":"+branchName, false)
+		if err != nil {
+			if !jsonOutput {
+				fmt.Printf("  Warning: failed to delete remote %s: %v\n", branchName, err)
+			}
+		} else {
+			output.DeletedBranches = append(output.DeletedBranches, branchName)
+			if !jsonOutput {
+				fmt.Printf("  Deleted remote: %s\n", branchName)
+			}
+		}
+
+		// Delete local branch if it exists
+		_, err = g.Run("branch", "-D", branchName)
+		if err == nil {
+			if !jsonOutput {
+				fmt.Printf("  Deleted local: %s\n", branchName)
+			}
+		}
+		// Ignore error - local branch may not exist
+	}
+
+	// Update remaining branches
+	if remainingCommitCount > 0 && !mergeNoRebase {
 
 		// Wait a moment for GitHub to process the merges, then fetch
 		_, err = g.Run("fetch", "origin")
@@ -369,14 +413,15 @@ To resolve manually:
 			return fmt.Errorf("failed to get commits after rebase: %w", err)
 		}
 
-		// Build remaining branches list (exclude merged positions)
-		mergedPositions := make(map[int]bool)
-		for _, pos := range positions {
-			mergedPositions[pos] = true
+		// Build remaining branches list (exclude merged ones)
+		// positions are 1-based stack indices, so merged branches are at existingBranches[0..len(positions)-1]
+		mergedBranches := make(map[string]bool)
+		for _, pm := range prsToMerge {
+			mergedBranches[pm.Branch.Branch] = true
 		}
 		var remainingBranches []stack.ExistingBranchInfo
 		for _, eb := range existingBranches {
-			if !mergedPositions[eb.Position] {
+			if !mergedBranches[eb.Branch] {
 				remainingBranches = append(remainingBranches, eb)
 			}
 		}
