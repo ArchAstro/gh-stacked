@@ -203,15 +203,15 @@ func TestRunPush_PreviewMode(t *testing.T) {
 
 	oldNewGit := newGit
 	oldNewGitHub := newGitHub
-	oldPreview := pushPreview
+	oldPreview := pushPreviewFlag
 	defer func() {
 		newGit = oldNewGit
 		newGitHub = oldNewGitHub
-		pushPreview = oldPreview
+		pushPreviewFlag = oldPreview
 	}()
 	newGit = func() git.GitOperations { return mockGit }
 	newGitHub = func() (github.GitHubOperations, error) { return mockGH, nil }
-	pushPreview = true
+	pushPreviewFlag = true
 
 	err := runPush(nil, []string{})
 	if err != nil {

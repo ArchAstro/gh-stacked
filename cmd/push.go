@@ -15,8 +15,16 @@ import (
 	"github.com/spf13/cobra"
 )
 
+type pushMode string
+
+const (
+	pushModeNormal  pushMode = ""
+	pushModePreview pushMode = "preview"
+	pushModeDraft   pushMode = "draft"
+)
+
 var (
-	pushPreview  bool
+	pushModeFlag pushMode
 	pushRegroup  bool
 	pushSquash   []string
 )
@@ -53,6 +61,9 @@ The command is idempotent:
   # Preview without creating PRs
   gh stacked push --preview
 
+  # Create PRs as drafts (not ready for review)
+  gh stacked push --draft
+
   # Squash commits 2-4 into one PR before pushing
   gh stacked push --squash 2-4
 
@@ -61,12 +72,19 @@ The command is idempotent:
 	RunE: runPush,
 }
 
+var (
+	pushPreviewFlag bool
+	pushDraftFlag   bool
+)
+
 func init() {
 	rootCmd.AddCommand(pushCmd)
 
-	pushCmd.Flags().BoolVar(&pushPreview, "preview", false, "Show what would happen without making changes")
+	pushCmd.Flags().BoolVar(&pushPreviewFlag, "preview", false, "Show what would happen without making changes")
+	pushCmd.Flags().BoolVar(&pushDraftFlag, "draft", false, "Create PRs as drafts (not ready for review)")
 	pushCmd.Flags().BoolVar(&pushRegroup, "regroup", false, "Interactively reorganize commits before pushing")
 	pushCmd.Flags().StringArrayVar(&pushSquash, "squash", nil, "Squash commits N-M into single PR (e.g., --squash 2-4)")
+	pushCmd.MarkFlagsMutuallyExclusive("preview", "draft")
 }
 
 func parseSquashRange(s string) (start, end int, err error) {
@@ -154,6 +172,14 @@ func findMaxPosition(existing []existingBranchInfo) int {
 }
 
 func runPush(cmd *cobra.Command, args []string) error {
+	// Determine push mode from flags
+	pushModeFlag = pushModeNormal
+	if pushPreviewFlag {
+		pushModeFlag = pushModePreview
+	} else if pushDraftFlag {
+		pushModeFlag = pushModeDraft
+	}
+
 	g := newGit()
 
 	// Get current branch
@@ -167,7 +193,7 @@ func runPush(cmd *cobra.Command, args []string) error {
 	}
 
 	// Check sync status with remote - fetch and detect merged commits
-	if !pushPreview {
+	if pushModeFlag != pushModePreview {
 		syncChecker := git.NewSyncChecker(g)
 		if !jsonOutput {
 			fmt.Println("Checking sync status...")
@@ -375,7 +401,7 @@ func runPush(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	if pushPreview {
+	if pushModeFlag == pushModePreview {
 		if jsonOutput {
 			out := struct {
 				StackID  string          `json:"stack_id"`
@@ -457,6 +483,9 @@ func runPush(cmd *cobra.Command, args []string) error {
 			fmt.Printf("  To update: %d\n", updateCount)
 		}
 
+		fmt.Println()
+		fmt.Println("Run 'gh stacked push' to create PRs, or 'gh stacked push --draft' to create as drafts.")
+
 		return nil
 	}
 
@@ -519,6 +548,7 @@ func runPush(cmd *cobra.Command, args []string) error {
 				Body:  prBody,
 				Head:  entry.Branch,
 				Base:  prBase,
+				Draft: pushModeFlag == pushModeDraft,
 			})
 			if err != nil {
 				return fmt.Errorf("failed to create PR for %s: %w", entry.CommitMsg, err)

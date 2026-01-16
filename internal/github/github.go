@@ -103,6 +103,7 @@ type CreatePullRequestInput struct {
 	Body  string
 	Head  string
 	Base  string
+	Draft bool
 }
 
 type PullRequest struct {
@@ -126,11 +127,12 @@ type PullRequest struct {
 func (c *Client) CreatePullRequest(input CreatePullRequestInput) (*PullRequest, error) {
 	path := fmt.Sprintf("repos/%s/%s/pulls", c.repo.Owner, c.repo.Name)
 
-	body := map[string]string{
+	body := map[string]interface{}{
 		"title": input.Title,
 		"body":  input.Body,
 		"head":  input.Head,
 		"base":  input.Base,
+		"draft": input.Draft,
 	}
 
 	jsonBody, err := json.Marshal(body)
