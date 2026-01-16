@@ -60,7 +60,7 @@ Displays:
 - Merge status (PENDING, MERGEABLE, BLOCKED, WAITING)
 - PR links and diff stats
 
-### Amend a specific PR
+### Amend a specific commit in the stack
 
 After making changes to address code review feedback:
 
@@ -69,32 +69,55 @@ git add .
 gh stacked amend 2
 ```
 
-This will:
-1. Create a fixup commit for PR #2's commit
-2. Run an autosquash rebase to fold it in
-3. Force-push all affected branches
+The argument is the stack position (1, 2, 3, ...) as shown by `gh stacked status`.
 
-### Merge a PR
-
-When PR #1 is approved and ready:
+Alternatively, use the PR number directly with `--pr`:
 
 ```bash
-gh stacked merge 1
+git add .
+gh stacked amend --pr 123
 ```
 
 This will:
-1. Merge the PR via GitHub API
+1. Create a fixup commit for the target commit
+2. Run an autosquash rebase to fold it in
+3. Force-push all affected branches
+
+### Merge the next PR
+
+When the first PR is approved and ready:
+
+```bash
+gh stacked merge
+```
+
+This will:
+1. Merge the first open PR via GitHub API
 2. Retarget the next PR to main
 3. Rebase remaining commits onto main
 4. Force-push all remaining branches
 
-PRs must be merged in order - you cannot merge PR #2 before PR #1.
+PRs are merged in stack order - the first open PR is always merged next.
 
 To merge without rebasing the rest of the stack:
 
 ```bash
-gh stacked merge 1 --no-rebase
+gh stacked merge --no-rebase
 ```
+
+### Merge the entire stack at once
+
+To squash all commits and merge as a single PR:
+
+```bash
+gh stacked merge-all
+```
+
+This will:
+1. Squash all commits into one
+2. Update and merge the last PR
+3. Close all other PRs in the stack
+4. Clean up all stack branches
 
 ## How it works
 
@@ -135,9 +158,11 @@ Each PR body includes a navigation footer:
 | `gh stacked push --preview` | Preview without creating PRs |
 | `gh stacked push --squash 2-4` | Squash commits 2-4 into one PR |
 | `gh stacked status` | Show current stack state |
-| `gh stacked amend <n>` | Amend PR n with staged changes |
-| `gh stacked merge <n>` | Merge PR n and update the stack |
-| `gh stacked merge <n> --no-rebase` | Merge without rebasing remaining |
+| `gh stacked amend <position>` | Amend stack position with staged changes |
+| `gh stacked amend --pr <num>` | Amend by PR number instead of position |
+| `gh stacked merge` | Merge the first open PR and update the stack |
+| `gh stacked merge --no-rebase` | Merge without rebasing remaining |
+| `gh stacked merge-all` | Squash and merge entire stack as one PR |
 
 ## Flags
 
@@ -163,14 +188,14 @@ gh stacked push
 # Check status
 gh stacked status
 
-# After code review, fix PR #2
+# After code review, fix stack position 2
 git add .
 gh stacked amend 2
 
-# When PR #1 is approved, merge it
-gh stacked merge 1
+# When the first PR is approved, merge it
+gh stacked merge
 
-# Continue with PR #2, now targeting main
+# Continue with the next PR, now targeting main
 gh stacked status
 ```
 

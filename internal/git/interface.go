@@ -17,6 +17,7 @@ type GitOperations interface {
 	ResetHard(ref string) error
 	Run(args ...string) (string, error)
 	ListRemoteBranches(pattern string) ([]string, error)
+	ApplyPatch(patch string, staged bool) error
 }
 
 // Verify Git implements GitOperations at compile time

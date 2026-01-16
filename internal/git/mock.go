@@ -142,6 +142,11 @@ func (m *MockGit) ListRemoteBranches(pattern string) ([]string, error) {
 	return m.RemoteBranches, nil
 }
 
+func (m *MockGit) ApplyPatch(patch string, staged bool) error {
+	m.Calls = append(m.Calls, MockCall{Method: "ApplyPatch", Args: []interface{}{patch, staged}})
+	return m.Errors["ApplyPatch"]
+}
+
 // WasCalled checks if method was called
 func (m *MockGit) WasCalled(method string) bool {
 	for _, c := range m.Calls {

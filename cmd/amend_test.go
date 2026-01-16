@@ -6,16 +6,17 @@ import (
 	"testing"
 
 	"github.com/calvin/gh-stacked/internal/git"
+	"github.com/calvin/gh-stacked/internal/github"
 )
 
 func TestAmendCommand(t *testing.T) {
 	cmd := amendCmd
 
-	if cmd.Use != "amend <position>" {
-		t.Errorf("expected Use 'amend <position>', got %s", cmd.Use)
+	if cmd.Use != "amend [position]" {
+		t.Errorf("expected Use 'amend [position]', got %s", cmd.Use)
 	}
 
-	// Verify the command takes exactly 1 argument
+	// Verify the command has an Args validator
 	if cmd.Args == nil {
 		t.Error("expected Args validator")
 	}
@@ -221,7 +222,11 @@ func TestRunAmend_PRNumberNegative(t *testing.T) {
 func TestRunAmend_NonNumericArg(t *testing.T) {
 	mockGit := git.NewMockGit()
 	mockGit.CurrentBranch = "feature/auth"
+	mockGit.BaseBranch = "main"
 	mockGit.StagedChanges = true
+	mockGit.Commits = []git.Commit{
+		{Hash: "abc1234", Subject: "Add user model"},
+	}
 
 	oldNewGit := amendNewGit
 	defer func() { amendNewGit = oldNewGit }()
@@ -481,6 +486,125 @@ func TestRunAmend_ExistingFixupWrongTarget(t *testing.T) {
 	expectedError := "no staged changes. Stage files first with `git add`"
 	if err.Error() != expectedError {
 		t.Errorf("expected error %q, got %q", expectedError, err.Error())
+	}
+}
+
+// TestRunAmend_PRFlag tests amending by PR number instead of position
+func TestRunAmend_PRFlag(t *testing.T) {
+	mockGit := git.NewMockGit()
+	mockGit.CurrentBranch = "feature/auth"
+	mockGit.BaseBranch = "main"
+	mockGit.StagedChanges = true
+	mockGit.Commits = []git.Commit{
+		{Hash: "abc1234", Subject: "Add user model"},
+		{Hash: "def5678", Subject: "Add user API"},
+	}
+	mockGit.RemoteBranches = []string{
+		"stack/feature/auth/01-add-user-model",
+		"stack/feature/auth/02-add-user-api",
+	}
+
+	mockGitHub := github.NewMockGitHub()
+	mockGitHub.AddExistingPRWithBase("stack/feature/auth/01-add-user-model", 101, "Add user model", "open", false, "main")
+	mockGitHub.AddExistingPRWithBase("stack/feature/auth/02-add-user-api", 102, "Add user API", "open", false, "stack/feature/auth/01-add-user-model")
+
+	oldNewGit := amendNewGit
+	oldNewGitHub := amendNewGitHub
+	oldPRNumber := amendPRNumber
+	defer func() {
+		amendNewGit = oldNewGit
+		amendNewGitHub = oldNewGitHub
+		amendPRNumber = oldPRNumber
+	}()
+	amendNewGit = func() git.GitOperations { return mockGit }
+	amendNewGitHub = func() (github.GitHubOperations, error) { return mockGitHub, nil }
+	amendPRNumber = 102 // Amend by PR number
+
+	err := runAmend(nil, []string{}) // No positional arg
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify fixup commit was created for commit 2 (PR #102)
+	for _, call := range mockGit.Calls {
+		if call.Method == "CreateFixupCommit" {
+			if len(call.Args) > 0 && call.Args[0] != "def5678" {
+				t.Errorf("expected fixup for commit def5678, got %v", call.Args[0])
+			}
+		}
+	}
+}
+
+// TestRunAmend_PRFlagNotFound tests error when PR number is not in stack
+func TestRunAmend_PRFlagNotFound(t *testing.T) {
+	mockGit := git.NewMockGit()
+	mockGit.CurrentBranch = "feature/auth"
+	mockGit.BaseBranch = "main"
+	mockGit.StagedChanges = true
+	mockGit.Commits = []git.Commit{
+		{Hash: "abc1234", Subject: "Add user model"},
+	}
+	mockGit.RemoteBranches = []string{
+		"stack/feature/auth/01-add-user-model",
+	}
+
+	mockGitHub := github.NewMockGitHub()
+	mockGitHub.AddExistingPR("stack/feature/auth/01-add-user-model", 101, "Add user model")
+
+	oldNewGit := amendNewGit
+	oldNewGitHub := amendNewGitHub
+	oldPRNumber := amendPRNumber
+	defer func() {
+		amendNewGit = oldNewGit
+		amendNewGitHub = oldNewGitHub
+		amendPRNumber = oldPRNumber
+	}()
+	amendNewGit = func() git.GitOperations { return mockGit }
+	amendNewGitHub = func() (github.GitHubOperations, error) { return mockGitHub, nil }
+	amendPRNumber = 999 // PR that doesn't exist in stack
+
+	err := runAmend(nil, []string{})
+	if err == nil {
+		t.Fatal("expected error for PR not found")
+	}
+
+	expectedSubstring := "PR #999 not found"
+	if !containsSubstring(err.Error(), expectedSubstring) {
+		t.Errorf("expected error containing %q, got %q", expectedSubstring, err.Error())
+	}
+}
+
+// TestRunAmend_BothPositionAndPRFlag tests error when both are specified
+func TestRunAmend_BothPositionAndPRFlag(t *testing.T) {
+	oldPRNumber := amendPRNumber
+	defer func() { amendPRNumber = oldPRNumber }()
+	amendPRNumber = 123
+
+	err := runAmend(nil, []string{"1"}) // Both position arg and --pr flag
+	if err == nil {
+		t.Fatal("expected error when both position and --pr are specified")
+	}
+
+	expectedSubstring := "cannot specify both"
+	if !containsSubstring(err.Error(), expectedSubstring) {
+		t.Errorf("expected error containing %q, got %q", expectedSubstring, err.Error())
+	}
+}
+
+// TestRunAmend_NeitherPositionNorPRFlag tests error when neither are specified
+func TestRunAmend_NeitherPositionNorPRFlag(t *testing.T) {
+	oldPRNumber := amendPRNumber
+	defer func() { amendPRNumber = oldPRNumber }()
+	amendPRNumber = 0
+
+	err := runAmend(nil, []string{}) // Neither position arg nor --pr flag
+	if err == nil {
+		t.Fatal("expected error when neither position nor --pr are specified")
+	}
+
+	expectedSubstring := "must specify either"
+	if !containsSubstring(err.Error(), expectedSubstring) {
+		t.Errorf("expected error containing %q, got %q", expectedSubstring, err.Error())
 	}
 }
 

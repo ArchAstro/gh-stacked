@@ -8,14 +8,19 @@ import (
 	"strconv"
 
 	"github.com/calvin/gh-stacked/internal/git"
+	"github.com/calvin/gh-stacked/internal/github"
 	"github.com/calvin/gh-stacked/internal/stack"
 	"github.com/spf13/cobra"
 )
 
 var amendVerbose bool
+var amendPRNumber int
 
 // Dependency injection points for testing
-var amendNewGit = func() git.GitOperations { return git.New() }
+var (
+	amendNewGit    = func() git.GitOperations { return git.New() }
+	amendNewGitHub = func() (github.GitHubOperations, error) { return github.NewClient() }
+)
 
 type AmendOutput struct {
 	Amended int      `json:"amended"`
@@ -25,14 +30,16 @@ type AmendOutput struct {
 }
 
 var amendCmd = &cobra.Command{
-	Use:   "amend <position>",
+	Use:   "amend [position]",
 	Short: "Amend a specific PR with staged changes",
 	Long: `Amend a specific PR in the stack with your staged changes.
 
-Use 'gh stacked status' to see the current stack positions (1, 2, 3, ...).
+You can specify which commit to amend by either:
+  - Stack position (1, 2, 3, ...) as shown by 'gh stacked status'
+  - PR number using the --pr flag
 
 This command:
-  1. Creates a fixup commit targeting the specified position's commit
+  1. Creates a fixup commit targeting the specified commit
   2. Runs an autosquash rebase to fold it in
   3. Force-pushes all affected PR branches
 
@@ -41,25 +48,32 @@ You must stage your changes before running this command.`,
   git add .
   gh stacked amend 2
 
+  # Or use the PR number directly
+  git add .
+  gh stacked amend --pr 123
+
   # Check positions first
   gh stacked status`,
-	Args: cobra.ExactArgs(1),
+	Args: cobra.MaximumNArgs(1),
 	RunE: runAmend,
 }
 
 func init() {
 	rootCmd.AddCommand(amendCmd)
 	amendCmd.Flags().BoolVarP(&amendVerbose, "verbose", "v", false, "Show detailed progress output")
+	amendCmd.Flags().IntVar(&amendPRNumber, "pr", 0, "PR number to amend (alternative to position)")
 }
 
 func runAmend(cmd *cobra.Command, args []string) error {
-	// Stack index is 1-based (1, 2, 3...) matching what 'gh stacked status' shows
-	stackIndex, err := strconv.Atoi(args[0])
-	if err != nil {
-		return fmt.Errorf("invalid stack position: %s", args[0])
+	// Validate arguments: need exactly one of position arg or --pr flag
+	hasPositionArg := len(args) > 0
+	hasPRFlag := amendPRNumber > 0
+
+	if hasPositionArg && hasPRFlag {
+		return fmt.Errorf("cannot specify both position argument and --pr flag")
 	}
-	if stackIndex <= 0 {
-		return fmt.Errorf("stack position must be positive (1, 2, 3, ...)")
+	if !hasPositionArg && !hasPRFlag {
+		return fmt.Errorf("must specify either a stack position or --pr flag")
 	}
 
 	g := amendNewGit()
@@ -104,14 +118,6 @@ func runAmend(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("no commits in stack")
 	}
 
-	if stackIndex > len(commits) {
-		return fmt.Errorf("stack position %d is out of range (stack has %d commits)", stackIndex, len(commits))
-	}
-
-	// Target index is 0-based
-	targetIdx := stackIndex - 1
-	targetCommit := commits[targetIdx]
-
 	if amendVerbose {
 		fmt.Printf("[verbose] Found %d commits in stack\n", len(commits))
 		fmt.Println("[verbose] Fetching remote branches...")
@@ -123,6 +129,72 @@ func runAmend(cmd *cobra.Command, args []string) error {
 		remoteBranches = nil
 	}
 	existingBranches := stack.ParseExistingBranches(remoteBranches, currentBranch)
+
+	// Determine stack index from position arg or --pr flag
+	var stackIndex int
+	if hasPositionArg {
+		stackIndex, err = strconv.Atoi(args[0])
+		if err != nil {
+			return fmt.Errorf("invalid stack position: %s", args[0])
+		}
+		if stackIndex <= 0 {
+			return fmt.Errorf("stack position must be positive (1, 2, 3, ...)")
+		}
+		if stackIndex > len(commits) {
+			return fmt.Errorf("stack position %d is out of range (stack has %d commits)", stackIndex, len(commits))
+		}
+	} else {
+		// Look up PR number to find stack position
+		if amendVerbose {
+			fmt.Printf("[verbose] Looking up PR #%d...\n", amendPRNumber)
+		}
+
+		gh, err := amendNewGitHub()
+		if err != nil {
+			return fmt.Errorf("failed to create GitHub client: %w", err)
+		}
+
+		// Build stack entries with PR info
+		getPRForBranch := func(branch string) (*stack.PRInfo, error) {
+			prs, err := gh.ListAllPullRequests(branch)
+			if err != nil {
+				return nil, err
+			}
+			if len(prs) == 0 {
+				return nil, nil
+			}
+			pr := prs[0]
+			return &stack.PRInfo{
+				Number: pr.Number,
+				URL:    pr.URL,
+				State:  pr.State,
+				Base:   pr.Base.Ref,
+			}, nil
+		}
+
+		entries := stack.AnalyzeStack(commits, remoteBranches, currentBranch, getPRForBranch)
+
+		// Find the entry with the matching PR number
+		found := false
+		for _, e := range entries {
+			if e.PRNumber == amendPRNumber {
+				stackIndex = e.Position
+				found = true
+				if amendVerbose {
+					fmt.Printf("[verbose] PR #%d is at stack position %d\n", amendPRNumber, stackIndex)
+				}
+				break
+			}
+		}
+
+		if !found {
+			return fmt.Errorf("PR #%d not found in current stack", amendPRNumber)
+		}
+	}
+
+	// Target index is 0-based
+	targetIdx := stackIndex - 1
+	targetCommit := commits[targetIdx]
 
 	if amendVerbose {
 		fmt.Printf("[verbose] Found %d existing remote branches\n", len(existingBranches))
@@ -152,6 +224,9 @@ func runAmend(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to save original state: %w", err)
 	}
 
+	// Track the fixup commit hash so we can restore staged changes on failure
+	var fixupCommitHash string
+
 	if hasExistingFixup {
 		if amendVerbose {
 			fmt.Printf("[verbose] Found existing fixup commit at top: %s\n", commits[len(commits)-1].Hash[:7])
@@ -159,6 +234,7 @@ func runAmend(cmd *cobra.Command, args []string) error {
 		if !jsonOutput {
 			fmt.Println("Using existing fixup commit from previous attempt...")
 		}
+		fixupCommitHash = commits[len(commits)-1].Hash
 	} else {
 		// No existing fixup - need staged changes to create one
 		if amendVerbose {
@@ -182,6 +258,12 @@ func runAmend(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("failed to create fixup commit: %w", err)
 		}
+
+		// Save the fixup commit hash for potential recovery
+		fixupCommitHash, err = g.Run("rev-parse", "HEAD")
+		if err != nil {
+			return fmt.Errorf("failed to get fixup commit hash: %w", err)
+		}
 	}
 
 	if amendVerbose {
@@ -192,12 +274,39 @@ func runAmend(cmd *cobra.Command, args []string) error {
 	// Run autosquash rebase
 	err = g.AutosquashRebase(baseBranch)
 	if err != nil {
-		// Attempt to abort and restore to state BEFORE fixup commit
+		// Abort the failed rebase
 		g.AbortRebase()
+
+		// Extract the diff from the fixup commit before resetting
+		fixupDiff, diffErr := g.Run("diff-tree", "-p", fixupCommitHash)
+
+		// Reset to state before fixup commit
 		g.ResetHard(origHead)
 
+		// Try to restore the staged changes
+		if diffErr == nil && fixupDiff != "" {
+			// Apply the diff as staged changes
+			applyErr := g.ApplyPatch(fixupDiff, true) // true = apply to index (staged)
+			if applyErr == nil {
+				return fmt.Errorf(`conflict rebasing "%s" onto %s
+Restored your staged changes (not committed).
+
+This usually means your staged changes conflict with commits after position %d.
+The file may have been modified, renamed, or deleted in later commits.
+
+To amend manually:
+  git stash
+  git rebase -i %s
+  # move the target commit, edit it, apply your changes
+  # then continue the rebase
+  git stash pop
+  gh stacked push`, targetCommit.Subject, baseBranch, stackIndex, baseBranch)
+			}
+		}
+
+		// Fallback if we couldn't restore staged changes
 		return fmt.Errorf(`conflict rebasing "%s" onto %s
-Restored original branch state (fixup commit removed).
+Could not restore staged changes automatically.
 
 This usually means your staged changes conflict with commits after position %d.
 The file may have been modified, renamed, or deleted in later commits.

@@ -182,3 +182,18 @@ func (g *Git) ListRemoteBranches(pattern string) ([]string, error) {
 	}
 	return branches, nil
 }
+
+func (g *Git) ApplyPatch(patch string, staged bool) error {
+	// Apply a patch. If staged is true, apply to the index (staged changes).
+	args := []string{"apply"}
+	if staged {
+		args = append(args, "--cached")
+	}
+	cmd := exec.Command("git", args...)
+	cmd.Stdin = strings.NewReader(patch)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%w: %s", err, string(out))
+	}
+	return nil
+}

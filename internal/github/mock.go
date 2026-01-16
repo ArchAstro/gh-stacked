@@ -22,6 +22,7 @@ type MockGitHub struct {
 	CreatedPRs []CreatePullRequestInput
 	UpdatedPRs []UpdatedPR
 	MergedPRs  []int
+	ClosedPRs  []int
 }
 
 type MockCall struct {
@@ -153,7 +154,11 @@ func (m *MockGitHub) MergePullRequest(number int) error {
 
 func (m *MockGitHub) ClosePullRequest(number int) error {
 	m.Calls = append(m.Calls, MockCall{Method: "ClosePullRequest", Args: []interface{}{number}})
-	return m.Errors["ClosePullRequest"]
+	if err := m.Errors["ClosePullRequest"]; err != nil {
+		return err
+	}
+	m.ClosedPRs = append(m.ClosedPRs, number)
+	return nil
 }
 
 // AddExistingPR sets up an existing PR for a branch
@@ -173,6 +178,11 @@ func (m *MockGitHub) AddMergedPR(branch string, number int, title string) {
 
 // AddExistingPRFull sets up a PR with full control over state and merged flag
 func (m *MockGitHub) AddExistingPRFull(branch string, number int, title string, state string, merged bool) {
+	m.AddExistingPRWithBase(branch, number, title, state, merged, "main")
+}
+
+// AddExistingPRWithBase sets up a PR with full control including base branch
+func (m *MockGitHub) AddExistingPRWithBase(branch string, number int, title string, state string, merged bool, base string) {
 	pr := PullRequest{
 		Number: number,
 		URL:    fmt.Sprintf("https://github.com/%s/%s/pull/%d", m.Repo.Owner, m.Repo.Name, number),
@@ -181,6 +191,7 @@ func (m *MockGitHub) AddExistingPRFull(branch string, number int, title string, 
 		Merged: merged,
 	}
 	pr.Head.Ref = branch
+	pr.Base.Ref = base
 	m.PRs[branch] = append(m.PRs[branch], pr)
 }
 
