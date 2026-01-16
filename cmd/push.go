@@ -63,11 +63,12 @@ var (
 )
 
 type PushOutput struct {
-	Action        string `json:"action"`
-	StackID       string `json:"stack_id"`
-	PRsCreated    []int  `json:"prs_created"`
-	PRsUpdated    []int  `json:"prs_updated"`
-	PRsRetargeted []int  `json:"prs_retargeted"`
+	Action          string `json:"action"`
+	StackID         string `json:"stack_id"`
+	PRsCreated      []int  `json:"prs_created"`
+	PRsUpdated      []int  `json:"prs_updated"`
+	PRsRetargeted   []int  `json:"prs_retargeted"`
+	PRsMarkedReady  []int  `json:"prs_marked_ready"`
 }
 
 var pushCmd = &cobra.Command{
@@ -359,6 +360,7 @@ func runPush(cmd *cobra.Command, args []string) error {
 				entry.PRNumber = info.prInfo.Number
 				entry.PRURL = info.prInfo.URL
 				entry.CurrentBase = info.prInfo.Base.Ref
+				entry.Draft = info.prInfo.Draft
 				existingPRs[info.existing.position] = info.prInfo.Number
 			}
 		} else {
@@ -511,10 +513,11 @@ func runPush(cmd *cobra.Command, args []string) error {
 	repo := gh.Repository()
 	_ = repo // repo available for future use
 	output := PushOutput{
-		StackID:       currentBranch,
-		PRsCreated:    []int{},
-		PRsUpdated:    []int{},
-		PRsRetargeted: []int{},
+		StackID:        currentBranch,
+		PRsCreated:     []int{},
+		PRsUpdated:     []int{},
+		PRsRetargeted:  []int{},
+		PRsMarkedReady: []int{},
 	}
 
 	for i, entry := range entries {
@@ -551,6 +554,23 @@ func runPush(cmd *cobra.Command, args []string) error {
 				output.PRsRetargeted = append(output.PRsRetargeted, entry.PRNumber)
 				if !jsonOutput {
 					fmt.Printf("Retargeted PR #%d: %s → %s\n", entry.PRNumber, entry.CurrentBase, prBase)
+				}
+			}
+
+			// If PR is a draft and we're in normal mode, mark it ready for review
+			if entry.Draft && mode == pushModeNormal {
+				err = gh.MarkPullRequestReadyForReview(entry.PRNumber)
+				if err != nil {
+					// Non-fatal - just warn
+					if !jsonOutput {
+						fmt.Printf("Warning: failed to mark PR #%d ready for review: %v\n", entry.PRNumber, err)
+					}
+				} else {
+					entries[i].Draft = false
+					output.PRsMarkedReady = append(output.PRsMarkedReady, entry.PRNumber)
+					if !jsonOutput {
+						fmt.Printf("Marked PR #%d ready for review\n", entry.PRNumber)
+					}
 				}
 			}
 
@@ -631,6 +651,9 @@ func runPush(cmd *cobra.Command, args []string) error {
 	summary := fmt.Sprintf("\nStack pushed: %d created, %d updated", len(output.PRsCreated), len(output.PRsUpdated))
 	if len(output.PRsRetargeted) > 0 {
 		summary += fmt.Sprintf(", %d retargeted", len(output.PRsRetargeted))
+	}
+	if len(output.PRsMarkedReady) > 0 {
+		summary += fmt.Sprintf(", %d marked ready", len(output.PRsMarkedReady))
 	}
 	fmt.Println(summary)
 

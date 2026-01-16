@@ -19,10 +19,11 @@ type MockGitHub struct {
 	Errors map[string]error
 
 	// Capture created/updated PRs for assertions
-	CreatedPRs []CreatePullRequestInput
-	UpdatedPRs []UpdatedPR
-	MergedPRs  []int
-	ClosedPRs  []int
+	CreatedPRs    []CreatePullRequestInput
+	UpdatedPRs    []UpdatedPR
+	MergedPRs     []int
+	ClosedPRs     []int
+	MarkedReadyPRs []int
 }
 
 type MockCall struct {
@@ -67,6 +68,7 @@ func (m *MockGitHub) CreatePullRequest(input CreatePullRequestInput) (*PullReque
 		Title:  input.Title,
 		Body:   input.Body,
 		State:  "open",
+		Draft:  input.Draft,
 	}
 	pr.Head.Ref = input.Head
 	pr.Base.Ref = input.Base
@@ -109,6 +111,7 @@ func (m *MockGitHub) GetPullRequest(number int) (*PullRequestStatus, error) {
 					Branch:     pr.Head.Ref,
 					BaseBranch: pr.Base.Ref,
 					State:      pr.State,
+					Draft:      pr.Draft,
 					Mergeable:  pr.Mergeable,
 					Additions:  pr.Additions,
 					Deletions:  pr.Deletions,
@@ -161,6 +164,23 @@ func (m *MockGitHub) ClosePullRequest(number int) error {
 	return nil
 }
 
+func (m *MockGitHub) MarkPullRequestReadyForReview(number int) error {
+	m.Calls = append(m.Calls, MockCall{Method: "MarkPullRequestReadyForReview", Args: []interface{}{number}})
+	if err := m.Errors["MarkPullRequestReadyForReview"]; err != nil {
+		return err
+	}
+	m.MarkedReadyPRs = append(m.MarkedReadyPRs, number)
+	// Update the PR's draft status in our stored PRs
+	for branch, prs := range m.PRs {
+		for i, pr := range prs {
+			if pr.Number == number {
+				m.PRs[branch][i].Draft = false
+			}
+		}
+	}
+	return nil
+}
+
 // AddExistingPR sets up an existing PR for a branch
 func (m *MockGitHub) AddExistingPR(branch string, number int, title string) {
 	m.AddExistingPRWithState(branch, number, title, "open")
@@ -183,12 +203,23 @@ func (m *MockGitHub) AddExistingPRFull(branch string, number int, title string, 
 
 // AddExistingPRWithBase sets up a PR with full control including base branch
 func (m *MockGitHub) AddExistingPRWithBase(branch string, number int, title string, state string, merged bool, base string) {
+	m.AddExistingPRWithDraft(branch, number, title, state, merged, base, false)
+}
+
+// AddDraftPR sets up a draft PR for a branch
+func (m *MockGitHub) AddDraftPR(branch string, number int, title string) {
+	m.AddExistingPRWithDraft(branch, number, title, "open", false, "main", true)
+}
+
+// AddExistingPRWithDraft sets up a PR with full control including draft status
+func (m *MockGitHub) AddExistingPRWithDraft(branch string, number int, title string, state string, merged bool, base string, draft bool) {
 	pr := PullRequest{
 		Number: number,
 		URL:    fmt.Sprintf("https://github.com/%s/%s/pull/%d", m.Repo.Owner, m.Repo.Name, number),
 		Title:  title,
 		State:  state,
 		Merged: merged,
+		Draft:  draft,
 	}
 	pr.Head.Ref = branch
 	pr.Base.Ref = base

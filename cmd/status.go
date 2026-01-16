@@ -35,6 +35,7 @@ type StatusPROutput struct {
 	Branch           string `json:"branch"`
 	TargetBranch     string `json:"target_branch"`
 	State            string `json:"state"`
+	Draft            bool   `json:"draft"`
 	Status           string `json:"status"` // "matched", "local_only", "dangling"
 	Mergeable        bool   `json:"mergeable"`
 	ChecksPassing    bool   `json:"checks_passing"`
@@ -182,6 +183,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		if e.PRNumber > 0 {
 			fullPR, err := gh.GetPullRequest(e.PRNumber)
 			if err == nil {
+				prOutput.Draft = fullPR.Draft
 				prOutput.Mergeable = fullPR.Mergeable
 				prOutput.Additions = fullPR.Additions
 				prOutput.Deletions = fullPR.Deletions
@@ -212,7 +214,9 @@ func runStatus(cmd *cobra.Command, args []string) error {
 
 		var statusIcon string
 		if pr.PRNumber > 0 {
-			if pr.Mergeable && pr.ChecksPassing {
+			if pr.Draft {
+				statusIcon = "📝 draft"
+			} else if pr.Mergeable && pr.ChecksPassing {
 				statusIcon = "✓ mergeable"
 			} else if pr.ChangesRequested {
 				statusIcon = "✗ blocked"

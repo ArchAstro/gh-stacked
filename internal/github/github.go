@@ -112,6 +112,7 @@ type PullRequest struct {
 	Body      string `json:"body"`
 	URL       string `json:"html_url"`
 	State     string `json:"state"`
+	Draft     bool   `json:"draft"`
 	Merged    bool   `json:"merged"`
 	Mergeable bool   `json:"mergeable"`
 	Head      struct {
@@ -188,6 +189,7 @@ type PullRequestStatus struct {
 	Branch           string
 	BaseBranch       string
 	State            string
+	Draft            bool
 	Mergeable        bool
 	ChecksPassing    bool
 	Approvals        int
@@ -213,6 +215,7 @@ func (c *Client) GetPullRequest(number int) (*PullRequestStatus, error) {
 		Branch:     pr.Head.Ref,
 		BaseBranch: pr.Base.Ref,
 		State:      pr.State,
+		Draft:      pr.Draft,
 		Mergeable:  pr.Mergeable,
 		Additions:  pr.Additions,
 		Deletions:  pr.Deletions,
@@ -265,4 +268,45 @@ func (c *Client) ClosePullRequest(number int) error {
 	}
 
 	return c.rest.Patch(path, bytes.NewReader(jsonBody), nil)
+}
+
+// MarkPullRequestReadyForReview converts a draft PR to ready for review.
+// This requires GraphQL as GitHub's REST API doesn't support this operation.
+func (c *Client) MarkPullRequestReadyForReview(number int) error {
+	// First, get the PR's node ID via REST API
+	path := fmt.Sprintf("repos/%s/%s/pulls/%d", c.repo.Owner, c.repo.Name, number)
+
+	var pr struct {
+		NodeID string `json:"node_id"`
+	}
+	err := c.rest.Get(path, &pr)
+	if err != nil {
+		return fmt.Errorf("failed to get PR node ID: %w", err)
+	}
+
+	// Use GraphQL mutation to mark as ready for review
+	var mutation struct {
+		MarkPullRequestReadyForReview struct {
+			PullRequest struct {
+				ID string
+			}
+		} `graphql:"markPullRequestReadyForReview(input: $input)"`
+	}
+
+	type MarkPullRequestReadyForReviewInput struct {
+		PullRequestID string `json:"pullRequestId"`
+	}
+
+	variables := map[string]interface{}{
+		"input": MarkPullRequestReadyForReviewInput{
+			PullRequestID: pr.NodeID,
+		},
+	}
+
+	err = c.graphql.Mutate("MarkPullRequestReadyForReview", &mutation, variables)
+	if err != nil {
+		return fmt.Errorf("failed to mark PR ready for review: %w", err)
+	}
+
+	return nil
 }

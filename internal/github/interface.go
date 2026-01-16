@@ -12,6 +12,7 @@ type GitHubOperations interface {
 	ListAllPullRequests(head string) ([]PullRequest, error)
 	MergePullRequest(number int) error
 	ClosePullRequest(number int) error
+	MarkPullRequestReadyForReview(number int) error
 }
 
 // Verify Client implements GitHubOperations at compile time

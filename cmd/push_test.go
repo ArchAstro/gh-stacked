@@ -1256,3 +1256,87 @@ func TestRunPush_InvalidMode(t *testing.T) {
 		t.Errorf("expected 'invalid mode' error, got: %v", err)
 	}
 }
+
+// TestRunPush_DraftToReady tests that pushing in normal mode converts draft PRs to ready
+func TestRunPush_DraftToReady(t *testing.T) {
+	mockGit := git.NewMockGit()
+	mockGit.CurrentBranch = "feature/auth"
+	mockGit.BaseBranch = "main"
+	mockGit.Commits = []git.Commit{
+		{Hash: "abc1234", Subject: "Add user model"},
+	}
+	// Simulate existing remote branch
+	mockGit.RemoteBranches = []string{"stack/feature/auth/01-add-user-model"}
+
+	mockGH := github.NewMockGitHub()
+	// Add a draft PR for the existing branch
+	mockGH.AddDraftPR("stack/feature/auth/01-add-user-model", 100, "Add user model")
+
+	oldNewGit := newGit
+	oldNewGitHub := newGitHub
+	oldMode := pushModeStr
+	defer func() {
+		newGit = oldNewGit
+		newGitHub = oldNewGitHub
+		pushModeStr = oldMode
+	}()
+	newGit = func() git.GitOperations { return mockGit }
+	newGitHub = func() (github.GitHubOperations, error) { return mockGH, nil }
+	pushModeStr = "" // Normal mode (not draft, not preview)
+
+	err := runPush(nil, []string{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should not create any new PRs (existing PR matches)
+	if len(mockGH.CreatedPRs) != 0 {
+		t.Errorf("expected 0 PRs created, got %d", len(mockGH.CreatedPRs))
+	}
+
+	// Draft PR should have been marked ready
+	if len(mockGH.MarkedReadyPRs) != 1 {
+		t.Fatalf("expected 1 PR marked ready, got %d", len(mockGH.MarkedReadyPRs))
+	}
+	if mockGH.MarkedReadyPRs[0] != 100 {
+		t.Errorf("expected PR #100 to be marked ready, got #%d", mockGH.MarkedReadyPRs[0])
+	}
+}
+
+// TestRunPush_DraftModeDoesNotMarkReady tests that pushing in draft mode doesn't convert drafts to ready
+func TestRunPush_DraftModeDoesNotMarkReady(t *testing.T) {
+	mockGit := git.NewMockGit()
+	mockGit.CurrentBranch = "feature/auth"
+	mockGit.BaseBranch = "main"
+	mockGit.Commits = []git.Commit{
+		{Hash: "abc1234", Subject: "Add user model"},
+	}
+	// Simulate existing remote branch
+	mockGit.RemoteBranches = []string{"stack/feature/auth/01-add-user-model"}
+
+	mockGH := github.NewMockGitHub()
+	// Add a draft PR for the existing branch
+	mockGH.AddDraftPR("stack/feature/auth/01-add-user-model", 100, "Add user model")
+
+	oldNewGit := newGit
+	oldNewGitHub := newGitHub
+	oldMode := pushModeStr
+	defer func() {
+		newGit = oldNewGit
+		newGitHub = oldNewGitHub
+		pushModeStr = oldMode
+	}()
+	newGit = func() git.GitOperations { return mockGit }
+	newGitHub = func() (github.GitHubOperations, error) { return mockGH, nil }
+	pushModeStr = "draft" // Draft mode - should NOT mark ready
+
+	err := runPush(nil, []string{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should NOT mark any PRs ready in draft mode
+	if len(mockGH.MarkedReadyPRs) != 0 {
+		t.Errorf("expected 0 PRs marked ready in draft mode, got %d", len(mockGH.MarkedReadyPRs))
+	}
+}
