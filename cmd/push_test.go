@@ -61,6 +61,11 @@ func TestPushCommand(t *testing.T) {
 		t.Error("expected --preview flag")
 	}
 
+	draftFlag := cmd.Flags().Lookup("draft")
+	if draftFlag == nil {
+		t.Error("expected --draft flag")
+	}
+
 	squashFlag := cmd.Flags().Lookup("squash")
 	if squashFlag == nil {
 		t.Error("expected --squash flag")
@@ -1150,5 +1155,86 @@ func TestRunPush_RegroupFails(t *testing.T) {
 	err := runPush(nil, []string{})
 	if err == nil {
 		t.Fatal("expected error when interactive rebase fails")
+	}
+}
+
+// TestRunPush_DraftMode tests that --draft flag creates PRs as drafts
+func TestRunPush_DraftMode(t *testing.T) {
+	mockGit := git.NewMockGit()
+	mockGit.CurrentBranch = "feature/auth"
+	mockGit.BaseBranch = "main"
+	mockGit.Commits = []git.Commit{
+		{Hash: "abc1234", Subject: "Add user model"},
+		{Hash: "def5678", Subject: "Add user API"},
+	}
+
+	mockGH := github.NewMockGitHub()
+
+	oldNewGit := newGit
+	oldNewGitHub := newGitHub
+	oldDraft := pushDraftFlag
+	defer func() {
+		newGit = oldNewGit
+		newGitHub = oldNewGitHub
+		pushDraftFlag = oldDraft
+	}()
+	newGit = func() git.GitOperations { return mockGit }
+	newGitHub = func() (github.GitHubOperations, error) { return mockGH, nil }
+	pushDraftFlag = true
+
+	err := runPush(nil, []string{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should create 2 PRs
+	if len(mockGH.CreatedPRs) != 2 {
+		t.Fatalf("expected 2 PRs created, got %d", len(mockGH.CreatedPRs))
+	}
+
+	// All PRs should be created as drafts
+	for i, pr := range mockGH.CreatedPRs {
+		if !pr.Draft {
+			t.Errorf("PR %d should be created as draft, but Draft=false", i+1)
+		}
+	}
+}
+
+// TestRunPush_NoDraftByDefault tests that PRs are not drafts by default
+func TestRunPush_NoDraftByDefault(t *testing.T) {
+	mockGit := git.NewMockGit()
+	mockGit.CurrentBranch = "feature/auth"
+	mockGit.BaseBranch = "main"
+	mockGit.Commits = []git.Commit{
+		{Hash: "abc1234", Subject: "Add user model"},
+	}
+
+	mockGH := github.NewMockGitHub()
+
+	oldNewGit := newGit
+	oldNewGitHub := newGitHub
+	oldDraft := pushDraftFlag
+	defer func() {
+		newGit = oldNewGit
+		newGitHub = oldNewGitHub
+		pushDraftFlag = oldDraft
+	}()
+	newGit = func() git.GitOperations { return mockGit }
+	newGitHub = func() (github.GitHubOperations, error) { return mockGH, nil }
+	pushDraftFlag = false // Explicitly set to false (default)
+
+	err := runPush(nil, []string{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should create 1 PR
+	if len(mockGH.CreatedPRs) != 1 {
+		t.Fatalf("expected 1 PR created, got %d", len(mockGH.CreatedPRs))
+	}
+
+	// PR should NOT be a draft by default
+	if mockGH.CreatedPRs[0].Draft {
+		t.Error("PR should not be created as draft by default")
 	}
 }
