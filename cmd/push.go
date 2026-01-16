@@ -15,18 +15,45 @@ import (
 	"github.com/spf13/cobra"
 )
 
-type pushMode string
+// pushMode represents the execution mode for the push command
+type pushMode int
 
 const (
-	pushModeNormal  pushMode = ""
-	pushModePreview pushMode = "preview"
-	pushModeDraft   pushMode = "draft"
+	pushModeNormal pushMode = iota
+	pushModePreview
+	pushModeDraft
 )
 
+// String returns the string representation of pushMode
+func (m pushMode) String() string {
+	switch m {
+	case pushModePreview:
+		return "preview"
+	case pushModeDraft:
+		return "draft"
+	default:
+		return ""
+	}
+}
+
+// parsePushMode converts a string to pushMode, returning an error for invalid values
+func parsePushMode(s string) (pushMode, error) {
+	switch s {
+	case "", "normal":
+		return pushModeNormal, nil
+	case "preview":
+		return pushModePreview, nil
+	case "draft":
+		return pushModeDraft, nil
+	default:
+		return pushModeNormal, fmt.Errorf("invalid mode %q: must be 'preview' or 'draft'", s)
+	}
+}
+
 var (
-	pushModeFlag pushMode
-	pushRegroup  bool
-	pushSquash   []string
+	pushModeStr string // raw flag value, validated in runPush
+	pushRegroup bool
+	pushSquash  []string
 )
 
 // Dependency injection points for testing
@@ -59,10 +86,10 @@ The command is idempotent:
   gh stacked push
 
   # Preview without creating PRs
-  gh stacked push --preview
+  gh stacked push --mode=preview
 
   # Create PRs as drafts (not ready for review)
-  gh stacked push --draft
+  gh stacked push --mode=draft
 
   # Squash commits 2-4 into one PR before pushing
   gh stacked push --squash 2-4
@@ -72,19 +99,12 @@ The command is idempotent:
 	RunE: runPush,
 }
 
-var (
-	pushPreviewFlag bool
-	pushDraftFlag   bool
-)
-
 func init() {
 	rootCmd.AddCommand(pushCmd)
 
-	pushCmd.Flags().BoolVar(&pushPreviewFlag, "preview", false, "Show what would happen without making changes")
-	pushCmd.Flags().BoolVar(&pushDraftFlag, "draft", false, "Create PRs as drafts (not ready for review)")
+	pushCmd.Flags().StringVar(&pushModeStr, "mode", "", "Push mode: 'preview' (dry run) or 'draft' (create draft PRs)")
 	pushCmd.Flags().BoolVar(&pushRegroup, "regroup", false, "Interactively reorganize commits before pushing")
 	pushCmd.Flags().StringArrayVar(&pushSquash, "squash", nil, "Squash commits N-M into single PR (e.g., --squash 2-4)")
-	pushCmd.MarkFlagsMutuallyExclusive("preview", "draft")
 }
 
 func parseSquashRange(s string) (start, end int, err error) {
@@ -172,12 +192,10 @@ func findMaxPosition(existing []existingBranchInfo) int {
 }
 
 func runPush(cmd *cobra.Command, args []string) error {
-	// Determine push mode from flags
-	pushModeFlag = pushModeNormal
-	if pushPreviewFlag {
-		pushModeFlag = pushModePreview
-	} else if pushDraftFlag {
-		pushModeFlag = pushModeDraft
+	// Parse and validate mode flag
+	mode, err := parsePushMode(pushModeStr)
+	if err != nil {
+		return err
 	}
 
 	g := newGit()
@@ -193,7 +211,7 @@ func runPush(cmd *cobra.Command, args []string) error {
 	}
 
 	// Check sync status with remote - fetch and detect merged commits
-	if pushModeFlag != pushModePreview {
+	if mode != pushModePreview {
 		syncChecker := git.NewSyncChecker(g)
 		if !jsonOutput {
 			fmt.Println("Checking sync status...")
@@ -401,7 +419,7 @@ func runPush(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	if pushModeFlag == pushModePreview {
+	if mode == pushModePreview {
 		if jsonOutput {
 			out := struct {
 				StackID  string          `json:"stack_id"`
@@ -484,7 +502,7 @@ func runPush(cmd *cobra.Command, args []string) error {
 		}
 
 		fmt.Println()
-		fmt.Println("Run 'gh stacked push' to create PRs, or 'gh stacked push --draft' to create as drafts.")
+		fmt.Println("Run 'gh stacked push' to create PRs, or 'gh stacked push --mode=draft' to create as drafts.")
 
 		return nil
 	}
@@ -548,7 +566,7 @@ func runPush(cmd *cobra.Command, args []string) error {
 				Body:  prBody,
 				Head:  entry.Branch,
 				Base:  prBase,
-				Draft: pushModeFlag == pushModeDraft,
+				Draft: mode == pushModeDraft,
 			})
 			if err != nil {
 				return fmt.Errorf("failed to create PR for %s: %w", entry.CommitMsg, err)

@@ -56,14 +56,9 @@ func TestPushCommand(t *testing.T) {
 	}
 
 	// Verify flags exist
-	previewFlag := cmd.Flags().Lookup("preview")
-	if previewFlag == nil {
-		t.Error("expected --preview flag")
-	}
-
-	draftFlag := cmd.Flags().Lookup("draft")
-	if draftFlag == nil {
-		t.Error("expected --draft flag")
+	modeFlag := cmd.Flags().Lookup("mode")
+	if modeFlag == nil {
+		t.Error("expected --mode flag")
 	}
 
 	squashFlag := cmd.Flags().Lookup("squash")
@@ -208,15 +203,15 @@ func TestRunPush_PreviewMode(t *testing.T) {
 
 	oldNewGit := newGit
 	oldNewGitHub := newGitHub
-	oldPreview := pushPreviewFlag
+	oldMode := pushModeStr
 	defer func() {
 		newGit = oldNewGit
 		newGitHub = oldNewGitHub
-		pushPreviewFlag = oldPreview
+		pushModeStr = oldMode
 	}()
 	newGit = func() git.GitOperations { return mockGit }
 	newGitHub = func() (github.GitHubOperations, error) { return mockGH, nil }
-	pushPreviewFlag = true
+	pushModeStr = "preview"
 
 	err := runPush(nil, []string{})
 	if err != nil {
@@ -1158,7 +1153,7 @@ func TestRunPush_RegroupFails(t *testing.T) {
 	}
 }
 
-// TestRunPush_DraftMode tests that --draft flag creates PRs as drafts
+// TestRunPush_DraftMode tests that --mode=draft creates PRs as drafts
 func TestRunPush_DraftMode(t *testing.T) {
 	mockGit := git.NewMockGit()
 	mockGit.CurrentBranch = "feature/auth"
@@ -1172,15 +1167,15 @@ func TestRunPush_DraftMode(t *testing.T) {
 
 	oldNewGit := newGit
 	oldNewGitHub := newGitHub
-	oldDraft := pushDraftFlag
+	oldMode := pushModeStr
 	defer func() {
 		newGit = oldNewGit
 		newGitHub = oldNewGitHub
-		pushDraftFlag = oldDraft
+		pushModeStr = oldMode
 	}()
 	newGit = func() git.GitOperations { return mockGit }
 	newGitHub = func() (github.GitHubOperations, error) { return mockGH, nil }
-	pushDraftFlag = true
+	pushModeStr = "draft"
 
 	err := runPush(nil, []string{})
 	if err != nil {
@@ -1213,15 +1208,15 @@ func TestRunPush_NoDraftByDefault(t *testing.T) {
 
 	oldNewGit := newGit
 	oldNewGitHub := newGitHub
-	oldDraft := pushDraftFlag
+	oldMode := pushModeStr
 	defer func() {
 		newGit = oldNewGit
 		newGitHub = oldNewGitHub
-		pushDraftFlag = oldDraft
+		pushModeStr = oldMode
 	}()
 	newGit = func() git.GitOperations { return mockGit }
 	newGitHub = func() (github.GitHubOperations, error) { return mockGH, nil }
-	pushDraftFlag = false // Explicitly set to false (default)
+	pushModeStr = "" // Explicitly set to empty (default/normal mode)
 
 	err := runPush(nil, []string{})
 	if err != nil {
@@ -1236,5 +1231,28 @@ func TestRunPush_NoDraftByDefault(t *testing.T) {
 	// PR should NOT be a draft by default
 	if mockGH.CreatedPRs[0].Draft {
 		t.Error("PR should not be created as draft by default")
+	}
+}
+
+// TestRunPush_InvalidMode tests that invalid mode values are rejected
+func TestRunPush_InvalidMode(t *testing.T) {
+	mockGit := git.NewMockGit()
+	mockGit.CurrentBranch = "feature/auth"
+
+	oldNewGit := newGit
+	oldMode := pushModeStr
+	defer func() {
+		newGit = oldNewGit
+		pushModeStr = oldMode
+	}()
+	newGit = func() git.GitOperations { return mockGit }
+	pushModeStr = "invalid"
+
+	err := runPush(nil, []string{})
+	if err == nil {
+		t.Fatal("expected error for invalid mode")
+	}
+	if !strings.Contains(err.Error(), "invalid mode") {
+		t.Errorf("expected 'invalid mode' error, got: %v", err)
 	}
 }
