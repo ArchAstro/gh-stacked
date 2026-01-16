@@ -56,9 +56,9 @@ func TestPushCommand(t *testing.T) {
 	}
 
 	// Verify flags exist
-	previewFlag := cmd.Flags().Lookup("preview")
-	if previewFlag == nil {
-		t.Error("expected --preview flag")
+	modeFlag := cmd.Flags().Lookup("mode")
+	if modeFlag == nil {
+		t.Error("expected --mode flag")
 	}
 
 	squashFlag := cmd.Flags().Lookup("squash")
@@ -203,15 +203,15 @@ func TestRunPush_PreviewMode(t *testing.T) {
 
 	oldNewGit := newGit
 	oldNewGitHub := newGitHub
-	oldPreview := pushPreview
+	oldMode := pushModeStr
 	defer func() {
 		newGit = oldNewGit
 		newGitHub = oldNewGitHub
-		pushPreview = oldPreview
+		pushModeStr = oldMode
 	}()
 	newGit = func() git.GitOperations { return mockGit }
 	newGitHub = func() (github.GitHubOperations, error) { return mockGH, nil }
-	pushPreview = true
+	pushModeStr = "preview"
 
 	err := runPush(nil, []string{})
 	if err != nil {
@@ -1150,5 +1150,193 @@ func TestRunPush_RegroupFails(t *testing.T) {
 	err := runPush(nil, []string{})
 	if err == nil {
 		t.Fatal("expected error when interactive rebase fails")
+	}
+}
+
+// TestRunPush_DraftMode tests that --mode=draft creates PRs as drafts
+func TestRunPush_DraftMode(t *testing.T) {
+	mockGit := git.NewMockGit()
+	mockGit.CurrentBranch = "feature/auth"
+	mockGit.BaseBranch = "main"
+	mockGit.Commits = []git.Commit{
+		{Hash: "abc1234", Subject: "Add user model"},
+		{Hash: "def5678", Subject: "Add user API"},
+	}
+
+	mockGH := github.NewMockGitHub()
+
+	oldNewGit := newGit
+	oldNewGitHub := newGitHub
+	oldMode := pushModeStr
+	defer func() {
+		newGit = oldNewGit
+		newGitHub = oldNewGitHub
+		pushModeStr = oldMode
+	}()
+	newGit = func() git.GitOperations { return mockGit }
+	newGitHub = func() (github.GitHubOperations, error) { return mockGH, nil }
+	pushModeStr = "draft"
+
+	err := runPush(nil, []string{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should create 2 PRs
+	if len(mockGH.CreatedPRs) != 2 {
+		t.Fatalf("expected 2 PRs created, got %d", len(mockGH.CreatedPRs))
+	}
+
+	// All PRs should be created as drafts
+	for i, pr := range mockGH.CreatedPRs {
+		if !pr.Draft {
+			t.Errorf("PR %d should be created as draft, but Draft=false", i+1)
+		}
+	}
+}
+
+// TestRunPush_NoDraftByDefault tests that PRs are not drafts by default
+func TestRunPush_NoDraftByDefault(t *testing.T) {
+	mockGit := git.NewMockGit()
+	mockGit.CurrentBranch = "feature/auth"
+	mockGit.BaseBranch = "main"
+	mockGit.Commits = []git.Commit{
+		{Hash: "abc1234", Subject: "Add user model"},
+	}
+
+	mockGH := github.NewMockGitHub()
+
+	oldNewGit := newGit
+	oldNewGitHub := newGitHub
+	oldMode := pushModeStr
+	defer func() {
+		newGit = oldNewGit
+		newGitHub = oldNewGitHub
+		pushModeStr = oldMode
+	}()
+	newGit = func() git.GitOperations { return mockGit }
+	newGitHub = func() (github.GitHubOperations, error) { return mockGH, nil }
+	pushModeStr = "" // Explicitly set to empty (default/normal mode)
+
+	err := runPush(nil, []string{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should create 1 PR
+	if len(mockGH.CreatedPRs) != 1 {
+		t.Fatalf("expected 1 PR created, got %d", len(mockGH.CreatedPRs))
+	}
+
+	// PR should NOT be a draft by default
+	if mockGH.CreatedPRs[0].Draft {
+		t.Error("PR should not be created as draft by default")
+	}
+}
+
+// TestRunPush_InvalidMode tests that invalid mode values are rejected
+func TestRunPush_InvalidMode(t *testing.T) {
+	mockGit := git.NewMockGit()
+	mockGit.CurrentBranch = "feature/auth"
+
+	oldNewGit := newGit
+	oldMode := pushModeStr
+	defer func() {
+		newGit = oldNewGit
+		pushModeStr = oldMode
+	}()
+	newGit = func() git.GitOperations { return mockGit }
+	pushModeStr = "invalid"
+
+	err := runPush(nil, []string{})
+	if err == nil {
+		t.Fatal("expected error for invalid mode")
+	}
+	if !strings.Contains(err.Error(), "invalid mode") {
+		t.Errorf("expected 'invalid mode' error, got: %v", err)
+	}
+}
+
+// TestRunPush_DraftToReady tests that pushing in normal mode converts draft PRs to ready
+func TestRunPush_DraftToReady(t *testing.T) {
+	mockGit := git.NewMockGit()
+	mockGit.CurrentBranch = "feature/auth"
+	mockGit.BaseBranch = "main"
+	mockGit.Commits = []git.Commit{
+		{Hash: "abc1234", Subject: "Add user model"},
+	}
+	// Simulate existing remote branch
+	mockGit.RemoteBranches = []string{"stack/feature/auth/01-add-user-model"}
+
+	mockGH := github.NewMockGitHub()
+	// Add a draft PR for the existing branch
+	mockGH.AddDraftPR("stack/feature/auth/01-add-user-model", 100, "Add user model")
+
+	oldNewGit := newGit
+	oldNewGitHub := newGitHub
+	oldMode := pushModeStr
+	defer func() {
+		newGit = oldNewGit
+		newGitHub = oldNewGitHub
+		pushModeStr = oldMode
+	}()
+	newGit = func() git.GitOperations { return mockGit }
+	newGitHub = func() (github.GitHubOperations, error) { return mockGH, nil }
+	pushModeStr = "" // Normal mode (not draft, not preview)
+
+	err := runPush(nil, []string{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should not create any new PRs (existing PR matches)
+	if len(mockGH.CreatedPRs) != 0 {
+		t.Errorf("expected 0 PRs created, got %d", len(mockGH.CreatedPRs))
+	}
+
+	// Draft PR should have been marked ready
+	if len(mockGH.MarkedReadyPRs) != 1 {
+		t.Fatalf("expected 1 PR marked ready, got %d", len(mockGH.MarkedReadyPRs))
+	}
+	if mockGH.MarkedReadyPRs[0] != 100 {
+		t.Errorf("expected PR #100 to be marked ready, got #%d", mockGH.MarkedReadyPRs[0])
+	}
+}
+
+// TestRunPush_DraftModeDoesNotMarkReady tests that pushing in draft mode doesn't convert drafts to ready
+func TestRunPush_DraftModeDoesNotMarkReady(t *testing.T) {
+	mockGit := git.NewMockGit()
+	mockGit.CurrentBranch = "feature/auth"
+	mockGit.BaseBranch = "main"
+	mockGit.Commits = []git.Commit{
+		{Hash: "abc1234", Subject: "Add user model"},
+	}
+	// Simulate existing remote branch
+	mockGit.RemoteBranches = []string{"stack/feature/auth/01-add-user-model"}
+
+	mockGH := github.NewMockGitHub()
+	// Add a draft PR for the existing branch
+	mockGH.AddDraftPR("stack/feature/auth/01-add-user-model", 100, "Add user model")
+
+	oldNewGit := newGit
+	oldNewGitHub := newGitHub
+	oldMode := pushModeStr
+	defer func() {
+		newGit = oldNewGit
+		newGitHub = oldNewGitHub
+		pushModeStr = oldMode
+	}()
+	newGit = func() git.GitOperations { return mockGit }
+	newGitHub = func() (github.GitHubOperations, error) { return mockGH, nil }
+	pushModeStr = "draft" // Draft mode - should NOT mark ready
+
+	err := runPush(nil, []string{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should NOT mark any PRs ready in draft mode
+	if len(mockGH.MarkedReadyPRs) != 0 {
+		t.Errorf("expected 0 PRs marked ready in draft mode, got %d", len(mockGH.MarkedReadyPRs))
 	}
 }

@@ -15,10 +15,45 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// pushMode represents the execution mode for the push command
+type pushMode int
+
+const (
+	pushModeNormal pushMode = iota
+	pushModePreview
+	pushModeDraft
+)
+
+// String returns the string representation of pushMode
+func (m pushMode) String() string {
+	switch m {
+	case pushModePreview:
+		return "preview"
+	case pushModeDraft:
+		return "draft"
+	default:
+		return ""
+	}
+}
+
+// parsePushMode converts a string to pushMode, returning an error for invalid values
+func parsePushMode(s string) (pushMode, error) {
+	switch s {
+	case "", "normal":
+		return pushModeNormal, nil
+	case "preview":
+		return pushModePreview, nil
+	case "draft":
+		return pushModeDraft, nil
+	default:
+		return pushModeNormal, fmt.Errorf("invalid mode %q: must be 'preview' or 'draft'", s)
+	}
+}
+
 var (
-	pushPreview  bool
-	pushRegroup  bool
-	pushSquash   []string
+	pushModeStr string // raw flag value, validated in runPush
+	pushRegroup bool
+	pushSquash  []string
 )
 
 // Dependency injection points for testing
@@ -28,11 +63,12 @@ var (
 )
 
 type PushOutput struct {
-	Action        string `json:"action"`
-	StackID       string `json:"stack_id"`
-	PRsCreated    []int  `json:"prs_created"`
-	PRsUpdated    []int  `json:"prs_updated"`
-	PRsRetargeted []int  `json:"prs_retargeted"`
+	Action          string `json:"action"`
+	StackID         string `json:"stack_id"`
+	PRsCreated      []int  `json:"prs_created"`
+	PRsUpdated      []int  `json:"prs_updated"`
+	PRsRetargeted   []int  `json:"prs_retargeted"`
+	PRsMarkedReady  []int  `json:"prs_marked_ready"`
 }
 
 var pushCmd = &cobra.Command{
@@ -51,7 +87,10 @@ The command is idempotent:
   gh stacked push
 
   # Preview without creating PRs
-  gh stacked push --preview
+  gh stacked push --mode=preview
+
+  # Create PRs as drafts (not ready for review)
+  gh stacked push --mode=draft
 
   # Squash commits 2-4 into one PR before pushing
   gh stacked push --squash 2-4
@@ -64,7 +103,7 @@ The command is idempotent:
 func init() {
 	rootCmd.AddCommand(pushCmd)
 
-	pushCmd.Flags().BoolVar(&pushPreview, "preview", false, "Show what would happen without making changes")
+	pushCmd.Flags().StringVar(&pushModeStr, "mode", "", "Push mode: 'preview' (dry run) or 'draft' (create draft PRs)")
 	pushCmd.Flags().BoolVar(&pushRegroup, "regroup", false, "Interactively reorganize commits before pushing")
 	pushCmd.Flags().StringArrayVar(&pushSquash, "squash", nil, "Squash commits N-M into single PR (e.g., --squash 2-4)")
 }
@@ -154,6 +193,12 @@ func findMaxPosition(existing []existingBranchInfo) int {
 }
 
 func runPush(cmd *cobra.Command, args []string) error {
+	// Parse and validate mode flag
+	mode, err := parsePushMode(pushModeStr)
+	if err != nil {
+		return err
+	}
+
 	g := newGit()
 
 	// Get current branch
@@ -167,7 +212,7 @@ func runPush(cmd *cobra.Command, args []string) error {
 	}
 
 	// Check sync status with remote - fetch and detect merged commits
-	if !pushPreview {
+	if mode != pushModePreview {
 		syncChecker := git.NewSyncChecker(g)
 		if !jsonOutput {
 			fmt.Println("Checking sync status...")
@@ -315,6 +360,7 @@ func runPush(cmd *cobra.Command, args []string) error {
 				entry.PRNumber = info.prInfo.Number
 				entry.PRURL = info.prInfo.URL
 				entry.CurrentBase = info.prInfo.Base.Ref
+				entry.Draft = info.prInfo.Draft
 				existingPRs[info.existing.position] = info.prInfo.Number
 			}
 		} else {
@@ -375,7 +421,7 @@ func runPush(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	if pushPreview {
+	if mode == pushModePreview {
 		if jsonOutput {
 			out := struct {
 				StackID  string          `json:"stack_id"`
@@ -457,6 +503,9 @@ func runPush(cmd *cobra.Command, args []string) error {
 			fmt.Printf("  To update: %d\n", updateCount)
 		}
 
+		fmt.Println()
+		fmt.Println("Run 'gh stacked push' to create PRs, or 'gh stacked push --mode=draft' to create as drafts.")
+
 		return nil
 	}
 
@@ -464,10 +513,11 @@ func runPush(cmd *cobra.Command, args []string) error {
 	repo := gh.Repository()
 	_ = repo // repo available for future use
 	output := PushOutput{
-		StackID:       currentBranch,
-		PRsCreated:    []int{},
-		PRsUpdated:    []int{},
-		PRsRetargeted: []int{},
+		StackID:        currentBranch,
+		PRsCreated:     []int{},
+		PRsUpdated:     []int{},
+		PRsRetargeted:  []int{},
+		PRsMarkedReady: []int{},
 	}
 
 	for i, entry := range entries {
@@ -507,6 +557,23 @@ func runPush(cmd *cobra.Command, args []string) error {
 				}
 			}
 
+			// If PR is a draft and we're in normal mode, mark it ready for review
+			if entry.Draft && mode == pushModeNormal {
+				err = gh.MarkPullRequestReadyForReview(entry.PRNumber)
+				if err != nil {
+					// Non-fatal - just warn
+					if !jsonOutput {
+						fmt.Printf("Warning: failed to mark PR #%d ready for review: %v\n", entry.PRNumber, err)
+					}
+				} else {
+					entries[i].Draft = false
+					output.PRsMarkedReady = append(output.PRsMarkedReady, entry.PRNumber)
+					if !jsonOutput {
+						fmt.Printf("Marked PR #%d ready for review\n", entry.PRNumber)
+					}
+				}
+			}
+
 			output.PRsUpdated = append(output.PRsUpdated, entry.PRNumber)
 			if !jsonOutput {
 				fmt.Printf("Pushed PR #%d: %s\n", entry.PRNumber, entry.CommitMsg)
@@ -519,6 +586,7 @@ func runPush(cmd *cobra.Command, args []string) error {
 				Body:  prBody,
 				Head:  entry.Branch,
 				Base:  prBase,
+				Draft: mode == pushModeDraft,
 			})
 			if err != nil {
 				return fmt.Errorf("failed to create PR for %s: %w", entry.CommitMsg, err)
@@ -583,6 +651,9 @@ func runPush(cmd *cobra.Command, args []string) error {
 	summary := fmt.Sprintf("\nStack pushed: %d created, %d updated", len(output.PRsCreated), len(output.PRsUpdated))
 	if len(output.PRsRetargeted) > 0 {
 		summary += fmt.Sprintf(", %d retargeted", len(output.PRsRetargeted))
+	}
+	if len(output.PRsMarkedReady) > 0 {
+		summary += fmt.Sprintf(", %d marked ready", len(output.PRsMarkedReady))
 	}
 	fmt.Println(summary)
 

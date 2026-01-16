@@ -141,6 +141,7 @@ type PREntry struct {
 	PRNumber      int
 	PRURL         string
 	CurrentBase   string // Current base branch of existing PR (for retargeting detection)
+	Draft         bool   // Whether the PR is a draft
 	Mergeable     bool
 	ChecksPassing bool
 	Approvals     int
