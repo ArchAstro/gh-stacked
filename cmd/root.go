@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -9,7 +10,7 @@ import (
 var jsonOutput bool
 
 var rootCmd = &cobra.Command{
-	Use:   "gh-stacked",
+	Use:   "stacked",
 	Short: "Manage stacked PRs from your commit history",
 	Long: `Manage stacked PRs from your commit history.
 
@@ -43,4 +44,10 @@ func Execute() {
 
 func init() {
 	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "Output as JSON")
+
+	// Customize usage template to show "gh stacked" instead of just "stacked"
+	defaultUsageTemplate := rootCmd.UsageTemplate()
+	ghUsageTemplate := strings.ReplaceAll(defaultUsageTemplate, "{{.UseLine}}", "gh {{.UseLine}}")
+	ghUsageTemplate = strings.ReplaceAll(ghUsageTemplate, "{{.CommandPath}}", "gh {{.CommandPath}}")
+	rootCmd.SetUsageTemplate(ghUsageTemplate)
 }
