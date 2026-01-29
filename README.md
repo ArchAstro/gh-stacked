@@ -158,6 +158,7 @@ Each PR body includes a navigation footer:
 | `gh stacked push --preview` | Preview without creating PRs |
 | `gh stacked push --squash 2-4` | Squash commits 2-4 into one PR |
 | `gh stacked status` | Show current stack state |
+| `gh stacked show` | Show stack top-to-bottom with PR titles and links |
 | `gh stacked amend <position>` | Amend stack position with staged changes |
 | `gh stacked amend --pr <num>` | Amend by PR number instead of position |
 | `gh stacked merge` | Merge the first open PR and update the stack |
