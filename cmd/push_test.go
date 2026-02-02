@@ -1303,6 +1303,285 @@ func TestRunPush_DraftToReady(t *testing.T) {
 	}
 }
 
+// TestRunPush_StackLastLabel_AddedToLastPR tests that stack/last label is added to the last PR
+// and removed from all other PRs in a multi-PR stack
+func TestRunPush_StackLastLabel_AddedToLastPR(t *testing.T) {
+	mockGit := git.NewMockGit()
+	mockGit.CurrentBranch = "feature/auth"
+	mockGit.BaseBranch = "main"
+	mockGit.Commits = []git.Commit{
+		{Hash: "abc1234", Subject: "Add user model"},
+		{Hash: "def5678", Subject: "Add user API"},
+		{Hash: "ghi9012", Subject: "Add user tests"},
+	}
+
+	mockGH := github.NewMockGitHub()
+
+	oldNewGit := newGit
+	oldNewGitHub := newGitHub
+	defer func() {
+		newGit = oldNewGit
+		newGitHub = oldNewGitHub
+	}()
+	newGit = func() git.GitOperations { return mockGit }
+	newGitHub = func() (github.GitHubOperations, error) { return mockGH, nil }
+
+	err := runPush(nil, []string{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should have 3 PRs created (100, 101, 102)
+	if len(mockGH.CreatedPRs) != 3 {
+		t.Fatalf("expected 3 PRs created, got %d", len(mockGH.CreatedPRs))
+	}
+
+	// stack/last should be added to the last PR only
+	if len(mockGH.AddedLabels) != 1 {
+		t.Fatalf("expected 1 label added, got %d", len(mockGH.AddedLabels))
+	}
+	if mockGH.AddedLabels[0].Number != 102 {
+		t.Errorf("expected stack/last on PR #102 (last), got PR #%d", mockGH.AddedLabels[0].Number)
+	}
+	if mockGH.AddedLabels[0].Label != "stack/last" {
+		t.Errorf("expected label 'stack/last', got %q", mockGH.AddedLabels[0].Label)
+	}
+
+	// stack/last should be removed from the first 2 PRs
+	if len(mockGH.RemovedLabels) != 2 {
+		t.Fatalf("expected 2 labels removed, got %d", len(mockGH.RemovedLabels))
+	}
+	removedFrom := make(map[int]bool)
+	for _, rl := range mockGH.RemovedLabels {
+		if rl.Label != "stack/last" {
+			t.Errorf("expected removal of 'stack/last', got %q", rl.Label)
+		}
+		removedFrom[rl.Number] = true
+	}
+	if !removedFrom[100] {
+		t.Error("expected stack/last to be removed from PR #100")
+	}
+	if !removedFrom[101] {
+		t.Error("expected stack/last to be removed from PR #101")
+	}
+}
+
+// TestRunPush_StackLastLabel_NotAppliedToSinglePR tests that no label management happens
+// for a stack with only 1 PR
+func TestRunPush_StackLastLabel_NotAppliedToSinglePR(t *testing.T) {
+	mockGit := git.NewMockGit()
+	mockGit.CurrentBranch = "feature/auth"
+	mockGit.BaseBranch = "main"
+	mockGit.Commits = []git.Commit{
+		{Hash: "abc1234", Subject: "Add user model"},
+	}
+
+	mockGH := github.NewMockGitHub()
+
+	oldNewGit := newGit
+	oldNewGitHub := newGitHub
+	defer func() {
+		newGit = oldNewGit
+		newGitHub = oldNewGitHub
+	}()
+	newGit = func() git.GitOperations { return mockGit }
+	newGitHub = func() (github.GitHubOperations, error) { return mockGH, nil }
+
+	err := runPush(nil, []string{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// No label operations for a single-PR stack
+	if len(mockGH.AddedLabels) != 0 {
+		t.Errorf("expected 0 labels added for single PR, got %d", len(mockGH.AddedLabels))
+	}
+	if len(mockGH.RemovedLabels) != 0 {
+		t.Errorf("expected 0 labels removed for single PR, got %d", len(mockGH.RemovedLabels))
+	}
+}
+
+// TestRunPush_StackLastLabel_MovesOnUpdate tests that when updating a stack,
+// the label moves from the old last PR to the new last PR
+func TestRunPush_StackLastLabel_MovesOnUpdate(t *testing.T) {
+	mockGit := git.NewMockGit()
+	mockGit.CurrentBranch = "feature/auth"
+	mockGit.BaseBranch = "main"
+	mockGit.Commits = []git.Commit{
+		{Hash: "abc1234", Subject: "Add user model"},
+		{Hash: "def5678", Subject: "Add user API"},
+		{Hash: "ghi9012", Subject: "Add user tests"}, // new commit added to end
+	}
+	// First 2 already have PRs
+	mockGit.RemoteBranches = []string{
+		"stack/feature/auth/01-add-user-model",
+		"stack/feature/auth/02-add-user-api",
+	}
+
+	mockGH := github.NewMockGitHub()
+	mockGH.AddExistingPR("stack/feature/auth/01-add-user-model", 100, "[1/2] Add user model")
+	mockGH.AddExistingPR("stack/feature/auth/02-add-user-api", 101, "[2/2] Add user API")
+
+	oldNewGit := newGit
+	oldNewGitHub := newGitHub
+	defer func() {
+		newGit = oldNewGit
+		newGitHub = oldNewGitHub
+	}()
+	newGit = func() git.GitOperations { return mockGit }
+	newGitHub = func() (github.GitHubOperations, error) { return mockGH, nil }
+
+	err := runPush(nil, []string{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// New PR (103) should get the label
+	if len(mockGH.AddedLabels) != 1 {
+		t.Fatalf("expected 1 label added, got %d", len(mockGH.AddedLabels))
+	}
+	// The new PR is created by the mock with NextPRNumber starting at 100,
+	// but 100 and 101 are already used, so next is 102
+	if mockGH.AddedLabels[0].Label != "stack/last" {
+		t.Errorf("expected 'stack/last' label, got %q", mockGH.AddedLabels[0].Label)
+	}
+
+	// Label should be removed from PR #100 and #101 (no longer last)
+	removedFrom := make(map[int]bool)
+	for _, rl := range mockGH.RemovedLabels {
+		removedFrom[rl.Number] = true
+	}
+	if !removedFrom[100] {
+		t.Error("expected stack/last to be removed from PR #100")
+	}
+	if !removedFrom[101] {
+		t.Error("expected stack/last to be removed from PR #101")
+	}
+}
+
+// TestRunPush_StackLastLabel_ErrorNonFatal tests that label errors don't fail the push
+func TestRunPush_StackLastLabel_ErrorNonFatal(t *testing.T) {
+	mockGit := git.NewMockGit()
+	mockGit.CurrentBranch = "feature/auth"
+	mockGit.BaseBranch = "main"
+	mockGit.Commits = []git.Commit{
+		{Hash: "abc1234", Subject: "Add user model"},
+		{Hash: "def5678", Subject: "Add user API"},
+	}
+
+	mockGH := github.NewMockGitHub()
+	// Inject errors for both label operations
+	mockGH.Errors["AddLabelToIssue"] = errors.New("label API error")
+	mockGH.Errors["RemoveLabelFromIssue"] = errors.New("label API error")
+
+	oldNewGit := newGit
+	oldNewGitHub := newGitHub
+	defer func() {
+		newGit = oldNewGit
+		newGitHub = oldNewGitHub
+	}()
+	newGit = func() git.GitOperations { return mockGit }
+	newGitHub = func() (github.GitHubOperations, error) { return mockGH, nil }
+
+	// Push should still succeed despite label errors
+	err := runPush(nil, []string{})
+	if err != nil {
+		t.Fatalf("push should succeed despite label errors, got: %v", err)
+	}
+
+	// PRs should still be created
+	if len(mockGH.CreatedPRs) != 2 {
+		t.Errorf("expected 2 PRs created, got %d", len(mockGH.CreatedPRs))
+	}
+}
+
+// TestRunPush_StackLastLabel_PreviewModeSkipsLabels tests that preview mode doesn't touch labels
+func TestRunPush_StackLastLabel_PreviewModeSkipsLabels(t *testing.T) {
+	mockGit := git.NewMockGit()
+	mockGit.CurrentBranch = "feature/auth"
+	mockGit.BaseBranch = "main"
+	mockGit.Commits = []git.Commit{
+		{Hash: "abc1234", Subject: "Add user model"},
+		{Hash: "def5678", Subject: "Add user API"},
+	}
+
+	mockGH := github.NewMockGitHub()
+
+	oldNewGit := newGit
+	oldNewGitHub := newGitHub
+	oldMode := pushModeStr
+	defer func() {
+		newGit = oldNewGit
+		newGitHub = oldNewGitHub
+		pushModeStr = oldMode
+	}()
+	newGit = func() git.GitOperations { return mockGit }
+	newGitHub = func() (github.GitHubOperations, error) { return mockGH, nil }
+	pushModeStr = "preview"
+
+	err := runPush(nil, []string{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// No label operations in preview mode
+	if len(mockGH.AddedLabels) != 0 {
+		t.Errorf("expected 0 labels added in preview mode, got %d", len(mockGH.AddedLabels))
+	}
+	if len(mockGH.RemovedLabels) != 0 {
+		t.Errorf("expected 0 labels removed in preview mode, got %d", len(mockGH.RemovedLabels))
+	}
+}
+
+// TestRunPush_StackLastLabel_AllExistingPRs tests label management when all PRs already exist
+func TestRunPush_StackLastLabel_AllExistingPRs(t *testing.T) {
+	mockGit := git.NewMockGit()
+	mockGit.CurrentBranch = "feature/auth"
+	mockGit.BaseBranch = "main"
+	mockGit.Commits = []git.Commit{
+		{Hash: "abc1234", Subject: "Add user model"},
+		{Hash: "def5678", Subject: "Add user API"},
+	}
+	mockGit.RemoteBranches = []string{
+		"stack/feature/auth/01-add-user-model",
+		"stack/feature/auth/02-add-user-api",
+	}
+
+	mockGH := github.NewMockGitHub()
+	mockGH.AddExistingPR("stack/feature/auth/01-add-user-model", 50, "[1/2] Add user model")
+	mockGH.AddExistingPR("stack/feature/auth/02-add-user-api", 51, "[2/2] Add user API")
+
+	oldNewGit := newGit
+	oldNewGitHub := newGitHub
+	defer func() {
+		newGit = oldNewGit
+		newGitHub = oldNewGitHub
+	}()
+	newGit = func() git.GitOperations { return mockGit }
+	newGitHub = func() (github.GitHubOperations, error) { return mockGH, nil }
+
+	err := runPush(nil, []string{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Label should be added to PR #51 (last)
+	if len(mockGH.AddedLabels) != 1 {
+		t.Fatalf("expected 1 label added, got %d", len(mockGH.AddedLabels))
+	}
+	if mockGH.AddedLabels[0].Number != 51 {
+		t.Errorf("expected stack/last on PR #51, got PR #%d", mockGH.AddedLabels[0].Number)
+	}
+
+	// Label should be removed from PR #50
+	if len(mockGH.RemovedLabels) != 1 {
+		t.Fatalf("expected 1 label removed, got %d", len(mockGH.RemovedLabels))
+	}
+	if mockGH.RemovedLabels[0].Number != 50 {
+		t.Errorf("expected label removed from PR #50, got PR #%d", mockGH.RemovedLabels[0].Number)
+	}
+}
+
 // TestRunPush_DraftModeDoesNotMarkReady tests that pushing in draft mode doesn't convert drafts to ready
 func TestRunPush_DraftModeDoesNotMarkReady(t *testing.T) {
 	mockGit := git.NewMockGit()

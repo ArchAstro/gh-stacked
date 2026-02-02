@@ -310,3 +310,36 @@ func (c *Client) MarkPullRequestReadyForReview(number int) error {
 
 	return nil
 }
+
+// AddLabelToIssue adds a label to an issue or pull request.
+// Creates the label if it doesn't exist.
+func (c *Client) AddLabelToIssue(number int, label string) error {
+	path := fmt.Sprintf("repos/%s/%s/issues/%d/labels", c.repo.Owner, c.repo.Name, number)
+
+	body := map[string]interface{}{
+		"labels": []string{label},
+	}
+
+	jsonBody, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+
+	return c.rest.Post(path, bytes.NewReader(jsonBody), nil)
+}
+
+// RemoveLabelFromIssue removes a label from an issue or pull request.
+// Returns nil if the label was not present.
+func (c *Client) RemoveLabelFromIssue(number int, label string) error {
+	path := fmt.Sprintf("repos/%s/%s/issues/%d/labels/%s", c.repo.Owner, c.repo.Name, number, label)
+
+	err := c.rest.Delete(path, nil)
+	if err != nil {
+		// Label not present is not an error
+		if strings.Contains(err.Error(), "404") || strings.Contains(err.Error(), "Label does not exist") {
+			return nil
+		}
+		return err
+	}
+	return nil
+}

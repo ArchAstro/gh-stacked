@@ -639,6 +639,29 @@ func runPush(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Third pass: Manage stack/last label for CI optimization
+	// Only the last PR in the stack gets the label; remove from all others
+	if len(entries) > 1 {
+		stackLastLabel := "stack/last"
+		for i, entry := range entries {
+			if entry.PRNumber > 0 {
+				isLast := i == len(entries)-1
+				if isLast {
+					err := gh.AddLabelToIssue(entry.PRNumber, stackLastLabel)
+					if err != nil && !jsonOutput {
+						fmt.Printf("Warning: failed to add %s label to PR #%d: %v\n", stackLastLabel, entry.PRNumber, err)
+					}
+				} else {
+					// Remove label if present (no-op if not)
+					err := gh.RemoveLabelFromIssue(entry.PRNumber, stackLastLabel)
+					if err != nil && !jsonOutput {
+						fmt.Printf("Warning: failed to remove %s label from PR #%d: %v\n", stackLastLabel, entry.PRNumber, err)
+					}
+				}
+			}
+		}
+	}
+
 	output.Action = "created"
 	if len(output.PRsUpdated) > 0 && len(output.PRsCreated) == 0 {
 		output.Action = "updated"

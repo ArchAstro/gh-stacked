@@ -19,11 +19,13 @@ type MockGitHub struct {
 	Errors map[string]error
 
 	// Capture created/updated PRs for assertions
-	CreatedPRs    []CreatePullRequestInput
-	UpdatedPRs    []UpdatedPR
-	MergedPRs     []int
-	ClosedPRs     []int
+	CreatedPRs     []CreatePullRequestInput
+	UpdatedPRs     []UpdatedPR
+	MergedPRs      []int
+	ClosedPRs      []int
 	MarkedReadyPRs []int
+	AddedLabels    []MockLabel
+	RemovedLabels  []MockLabel
 }
 
 type MockCall struct {
@@ -35,6 +37,11 @@ type UpdatedPR struct {
 	Number int
 	Title  string
 	Body   string
+}
+
+type MockLabel struct {
+	Number int
+	Label  string
 }
 
 func NewMockGitHub() *MockGitHub {
@@ -178,6 +185,24 @@ func (m *MockGitHub) MarkPullRequestReadyForReview(number int) error {
 			}
 		}
 	}
+	return nil
+}
+
+func (m *MockGitHub) AddLabelToIssue(number int, label string) error {
+	m.Calls = append(m.Calls, MockCall{Method: "AddLabelToIssue", Args: []interface{}{number, label}})
+	if err := m.Errors["AddLabelToIssue"]; err != nil {
+		return err
+	}
+	m.AddedLabels = append(m.AddedLabels, MockLabel{Number: number, Label: label})
+	return nil
+}
+
+func (m *MockGitHub) RemoveLabelFromIssue(number int, label string) error {
+	m.Calls = append(m.Calls, MockCall{Method: "RemoveLabelFromIssue", Args: []interface{}{number, label}})
+	if err := m.Errors["RemoveLabelFromIssue"]; err != nil {
+		return err
+	}
+	m.RemovedLabels = append(m.RemovedLabels, MockLabel{Number: number, Label: label})
 	return nil
 }
 

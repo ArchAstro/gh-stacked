@@ -1,7 +1,10 @@
 // internal/github/github_test.go
 package github
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
 
 func TestNewClient(t *testing.T) {
 	// This test verifies the client can be created
@@ -128,5 +131,78 @@ func TestParseGitRemoteURL(t *testing.T) {
 				t.Errorf("repo = %q, want %q", repo, tt.wantRepo)
 			}
 		})
+	}
+}
+
+func TestMockGitHub_AddLabelToIssue(t *testing.T) {
+	mock := NewMockGitHub()
+
+	err := mock.AddLabelToIssue(42, "stack/last")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(mock.AddedLabels) != 1 {
+		t.Fatalf("expected 1 added label, got %d", len(mock.AddedLabels))
+	}
+	if mock.AddedLabels[0].Number != 42 {
+		t.Errorf("expected PR #42, got #%d", mock.AddedLabels[0].Number)
+	}
+	if mock.AddedLabels[0].Label != "stack/last" {
+		t.Errorf("expected label 'stack/last', got %q", mock.AddedLabels[0].Label)
+	}
+
+	// Verify call was recorded
+	found := false
+	for _, call := range mock.Calls {
+		if call.Method == "AddLabelToIssue" {
+			found = true
+			if call.Args[0].(int) != 42 {
+				t.Errorf("expected call arg PR #42, got #%d", call.Args[0].(int))
+			}
+			if call.Args[1].(string) != "stack/last" {
+				t.Errorf("expected call arg 'stack/last', got %q", call.Args[1].(string))
+			}
+		}
+	}
+	if !found {
+		t.Error("AddLabelToIssue call not recorded")
+	}
+}
+
+func TestMockGitHub_RemoveLabelFromIssue(t *testing.T) {
+	mock := NewMockGitHub()
+
+	err := mock.RemoveLabelFromIssue(42, "stack/last")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(mock.RemovedLabels) != 1 {
+		t.Fatalf("expected 1 removed label, got %d", len(mock.RemovedLabels))
+	}
+	if mock.RemovedLabels[0].Number != 42 {
+		t.Errorf("expected PR #42, got #%d", mock.RemovedLabels[0].Number)
+	}
+	if mock.RemovedLabels[0].Label != "stack/last" {
+		t.Errorf("expected label 'stack/last', got %q", mock.RemovedLabels[0].Label)
+	}
+}
+
+func TestMockGitHub_LabelErrorInjection(t *testing.T) {
+	mock := NewMockGitHub()
+	mock.Errors["AddLabelToIssue"] = errors.New("API rate limited")
+
+	err := mock.AddLabelToIssue(42, "stack/last")
+	if err == nil {
+		t.Fatal("expected error from injected error")
+	}
+	if err.Error() != "API rate limited" {
+		t.Errorf("expected 'API rate limited', got %q", err.Error())
+	}
+
+	// Should not have recorded in AddedLabels since it errored
+	if len(mock.AddedLabels) != 0 {
+		t.Errorf("expected 0 added labels on error, got %d", len(mock.AddedLabels))
 	}
 }

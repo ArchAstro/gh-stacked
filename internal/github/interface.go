@@ -13,6 +13,8 @@ type GitHubOperations interface {
 	MergePullRequest(number int) error
 	ClosePullRequest(number int) error
 	MarkPullRequestReadyForReview(number int) error
+	AddLabelToIssue(number int, label string) error
+	RemoveLabelFromIssue(number int, label string) error
 }
 
 // Verify Client implements GitHubOperations at compile time
