@@ -160,21 +160,44 @@ func runMergeAll(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to create squash commit: %w", err)
 	}
 
-	// Force push to the last PR's branch
-	if !jsonOutput {
-		fmt.Printf("Pushing to %s...\n", lastPR.Branch)
+	// Helper to rebase onto latest main and push
+	rebaseAndPush := func() error {
+		if !jsonOutput {
+			fmt.Printf("Rebasing onto %s...\n", rebaseTarget)
+		}
+
+		_, err = g.Run("fetch", "origin")
+		if err != nil {
+			return fmt.Errorf("failed to fetch origin: %w", err)
+		}
+
+		_, err = g.Run("rebase", rebaseTarget)
+		if err != nil {
+			g.AbortRebase()
+			return fmt.Errorf("rebase conflict - cannot merge automatically. Resolve conflicts manually and retry:\n  git fetch origin && git rebase %s", rebaseTarget)
+		}
+
+		if !jsonOutput {
+			fmt.Printf("Pushing to %s...\n", lastPR.Branch)
+		}
+
+		err = g.CreateBranchAtCommit(lastPR.Branch, "HEAD")
+		if err != nil {
+			return fmt.Errorf("failed to update branch %s: %w", lastPR.Branch, err)
+		}
+
+		err = g.PushBranch("origin", lastPR.Branch, true)
+		if err != nil {
+			return fmt.Errorf("failed to push %s: %w", lastPR.Branch, err)
+		}
+
+		return nil
 	}
 
-	err = g.CreateBranchAtCommit(lastPR.Branch, "HEAD")
-	if err != nil {
+	// Initial rebase and push
+	if err := rebaseAndPush(); err != nil {
 		g.Run("reset", "--hard", originalHead)
-		return fmt.Errorf("failed to update branch %s: %w", lastPR.Branch, err)
-	}
-
-	err = g.PushBranch("origin", lastPR.Branch, true)
-	if err != nil {
-		g.Run("reset", "--hard", originalHead)
-		return fmt.Errorf("failed to push %s: %w", lastPR.Branch, err)
+		return err
 	}
 
 	// Retarget the last PR to main (it may have been targeting another stack branch)
@@ -186,15 +209,88 @@ func runMergeAll(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to retarget PR #%d: %w", lastPR.PRNumber, err)
 	}
 
-	// Merge the last PR
-	if !jsonOutput {
-		fmt.Printf("Merging PR #%d...\n", lastPR.PRNumber)
+	// Merge with retry logic to handle main moving between push and merge.
+	// If merge fails due to branch being out of date, rebase and try again.
+	const maxMergeRetries = 3
+	var mergeErr error
+	for attempt := 1; attempt <= maxMergeRetries; attempt++ {
+		if !jsonOutput {
+			if attempt > 1 {
+				fmt.Printf("Retrying merge (attempt %d/%d)...\n", attempt, maxMergeRetries)
+			}
+			fmt.Printf("Merging PR #%d...\n", lastPR.PRNumber)
+		}
+
+		mergeErr = gh.MergePullRequest(lastPR.PRNumber)
+		if mergeErr == nil {
+			break // Success
+		}
+
+		// Check if this is a "not up to date" error that we can retry
+		errStr := mergeErr.Error()
+		isStaleError := strings.Contains(errStr, "not up to date") ||
+			strings.Contains(errStr, "out of date") ||
+			strings.Contains(errStr, "Head branch was modified")
+
+		if !isStaleError || attempt == maxMergeRetries {
+			break // Non-retryable error or out of retries
+		}
+
+		if !jsonOutput {
+			fmt.Printf("PR is out of date with %s, rebasing...\n", targetBase)
+		}
+
+		if err := rebaseAndPush(); err != nil {
+			g.Run("reset", "--hard", originalHead)
+			return fmt.Errorf("failed to update PR after main moved: %w", err)
+		}
 	}
-	err = gh.MergePullRequest(lastPR.PRNumber)
-	if err != nil {
-		return fmt.Errorf("failed to merge PR #%d: %w", lastPR.PRNumber, err)
+
+	if mergeErr != nil {
+		// Provide actionable error message
+		errStr := mergeErr.Error()
+		if strings.Contains(errStr, "not up to date") || strings.Contains(errStr, "out of date") {
+			return fmt.Errorf("PR #%d could not be merged - branch protection requires it to be up to date with %s.\n"+
+				"The PR has been pushed and retargeted. You can retry with:\n"+
+				"  gh pr merge %d --squash", lastPR.PRNumber, targetBase, lastPR.PRNumber)
+		}
+		if strings.Contains(errStr, "review") || strings.Contains(errStr, "approval") {
+			return fmt.Errorf("PR #%d could not be merged - requires review approval.\n"+
+				"The PR has been pushed and retargeted to %s. Merge manually after approval:\n"+
+				"  gh pr merge %d --squash", lastPR.PRNumber, targetBase, lastPR.PRNumber)
+		}
+		if strings.Contains(errStr, "check") || strings.Contains(errStr, "status") {
+			return fmt.Errorf("PR #%d could not be merged - required status checks have not passed.\n"+
+				"The PR has been pushed and retargeted to %s. Merge manually after checks pass:\n"+
+				"  gh pr merge %d --squash", lastPR.PRNumber, targetBase, lastPR.PRNumber)
+		}
+		return fmt.Errorf("failed to merge PR #%d: %w\n"+
+			"The PR has been pushed and retargeted to %s. You may be able to merge manually:\n"+
+			"  gh pr merge %d --squash", lastPR.PRNumber, mergeErr, targetBase, lastPR.PRNumber)
 	}
 	output.Merged = lastPR.PRNumber
+
+	// CRITICAL: Reset local to main IMMEDIATELY after merge succeeds.
+	// This ensures local state is clean regardless of whether subsequent
+	// cleanup operations (close PRs, delete branches) fail.
+	// Any failure after this point is cosmetic - local state is safe.
+	if !jsonOutput {
+		fmt.Println("Syncing local branch to merged main...")
+	}
+	_, err = g.Run("fetch", "origin")
+	if err != nil {
+		// Non-fatal: warn but continue - merge succeeded
+		if !jsonOutput {
+			fmt.Printf("Warning: failed to fetch origin: %v\n", err)
+		}
+	} else {
+		_, err = g.Run("reset", "--hard", rebaseTarget)
+		if err != nil {
+			if !jsonOutput {
+				fmt.Printf("Warning: failed to reset to %s: %v\n", rebaseTarget, err)
+			}
+		}
+	}
 
 	// Close all other PRs
 	for _, pr := range openPRs {
@@ -236,21 +332,7 @@ func runMergeAll(cmd *cobra.Command, args []string) error {
 		g.Run("branch", "-D", pr.Branch)
 	}
 
-	// Rebase local branch onto updated main
-	if !jsonOutput {
-		fmt.Printf("Rebasing onto %s...\n", rebaseTarget)
-	}
-	_, err = g.Run("fetch", "origin")
-	if err != nil {
-		return fmt.Errorf("failed to fetch origin: %w", err)
-	}
-
-	_, err = g.Run("rebase", rebaseTarget)
-	if err != nil {
-		g.AbortRebase()
-		return fmt.Errorf(`rebase conflict - resolve manually:
-  git fetch origin && git rebase %s`, rebaseTarget)
-	}
+	// Local branch already reset to main above - no rebase needed
 
 	if jsonOutput {
 		return json.NewEncoder(os.Stdout).Encode(output)
