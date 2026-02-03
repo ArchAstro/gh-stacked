@@ -36,6 +36,7 @@ Examples:
 }
 
 func Execute() {
+	rootCmd.Version = Version
 	err := rootCmd.Execute()
 	if err != nil {
 		os.Exit(1)

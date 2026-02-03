@@ -1,4 +1,6 @@
 BINARY := gh-stacked
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+LDFLAGS := -ldflags "-X main.version=$(VERSION)"
 INSTALL_DIR := $(HOME)/.local/share/gh/extensions/gh-stacked
 
 .PHONY: all build test cover clean install uninstall lint fmt
@@ -6,7 +8,7 @@ INSTALL_DIR := $(HOME)/.local/share/gh/extensions/gh-stacked
 all: build
 
 build:
-	go build -o $(BINARY) .
+	go build $(LDFLAGS) -o $(BINARY) .
 
 test:
 	go test ./...
