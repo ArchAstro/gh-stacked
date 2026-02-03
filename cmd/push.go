@@ -520,7 +520,24 @@ func runPush(cmd *cobra.Command, args []string) error {
 		PRsMarkedReady: []int{},
 	}
 
+	isMultiPRStack := len(entries) > 1
+	stackLastLabel := "stack/last"
+
 	for i, entry := range entries {
+		isLast := i == len(entries)-1
+
+		// For the last entry in a multi-PR stack with an existing PR,
+		// add the stack/last label BEFORE pushing the branch.
+		// Pushing triggers a pull_request synchronize event, and CI checks
+		// for this label in its if-condition — so the label must be present
+		// before the push to avoid a race condition.
+		if isMultiPRStack && isLast && entry.PRNumber > 0 {
+			err := gh.AddLabelToIssue(entry.PRNumber, stackLastLabel)
+			if err != nil && !jsonOutput {
+				fmt.Printf("Warning: failed to add %s label to PR #%d: %v\n", stackLastLabel, entry.PRNumber, err)
+			}
+		}
+
 		// Create branch at commit
 		err := g.CreateBranchAtCommit(entry.Branch, entry.CommitHash)
 		if err != nil {
@@ -599,6 +616,24 @@ func runPush(cmd *cobra.Command, args []string) error {
 			if !jsonOutput {
 				fmt.Printf("Created PR #%d: %s\n", pr.Number, pr.URL)
 			}
+
+			// For new last PR in a multi-PR stack, add label immediately
+			// after creation. There's still a small race with the PR opened
+			// event, but this minimizes the window.
+			if isMultiPRStack && isLast {
+				err = gh.AddLabelToIssue(pr.Number, stackLastLabel)
+				if err != nil && !jsonOutput {
+					fmt.Printf("Warning: failed to add %s label to PR #%d: %v\n", stackLastLabel, pr.Number, err)
+				}
+			}
+		}
+
+		// Remove stack/last from non-last PRs in multi-PR stacks
+		if isMultiPRStack && !isLast && entries[i].PRNumber > 0 {
+			err = gh.RemoveLabelFromIssue(entries[i].PRNumber, stackLastLabel)
+			if err != nil && !jsonOutput {
+				fmt.Printf("Warning: failed to remove %s label from PR #%d: %v\n", stackLastLabel, entries[i].PRNumber, err)
+			}
 		}
 	}
 
@@ -633,29 +668,6 @@ func runPush(cmd *cobra.Command, args []string) error {
 				if err != nil {
 					if !jsonOutput {
 						fmt.Printf("Warning: failed to update PR #%d metadata: %v\n", entry.PRNumber, err)
-					}
-				}
-			}
-		}
-	}
-
-	// Third pass: Manage stack/last label for CI optimization
-	// Only the last PR in the stack gets the label; remove from all others
-	if len(entries) > 1 {
-		stackLastLabel := "stack/last"
-		for i, entry := range entries {
-			if entry.PRNumber > 0 {
-				isLast := i == len(entries)-1
-				if isLast {
-					err := gh.AddLabelToIssue(entry.PRNumber, stackLastLabel)
-					if err != nil && !jsonOutput {
-						fmt.Printf("Warning: failed to add %s label to PR #%d: %v\n", stackLastLabel, entry.PRNumber, err)
-					}
-				} else {
-					// Remove label if present (no-op if not)
-					err := gh.RemoveLabelFromIssue(entry.PRNumber, stackLastLabel)
-					if err != nil && !jsonOutput {
-						fmt.Printf("Warning: failed to remove %s label from PR #%d: %v\n", stackLastLabel, entry.PRNumber, err)
 					}
 				}
 			}
