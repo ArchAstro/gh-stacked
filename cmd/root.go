@@ -22,14 +22,14 @@ Examples:
   gh stacked push
 
   # Preview what would be created
-  gh stacked push --preview
+  gh stacked push --mode=preview
 
   # Fix PR 2 after code review
   git add .
   gh stacked amend 2
 
   # Merge the first PR when ready
-  gh stacked merge 1
+  gh stacked merge
 
   # Check stack state
   gh stacked status`,

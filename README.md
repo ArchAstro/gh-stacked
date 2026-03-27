@@ -2,203 +2,144 @@
 
 A GitHub CLI extension for managing stacked pull requests.
 
-Each commit on your branch becomes a separate PR, chained together so reviewers see clean, incremental diffs.
+`gh-stacked` turns the commits on your feature branch into a stack of pull requests. Each commit maps to one PR, and each PR targets the previous PR in the stack so reviewers see small, incremental diffs instead of one large branch diff.
+
+## Motivation
+
+Stacked PRs are useful when one feature is too large for a single review, but splitting it into many long-lived branches is too much overhead.
+
+`gh-stacked` is built for a commit-first workflow:
+
+- Work on one normal feature branch.
+- Keep commits small and reviewable.
+- Turn those commits into chained PRs when you are ready for review.
+- Amend a reviewed commit without manually rebuilding the stack.
+- Merge one PR at a time, or squash the whole stack at the end.
 
 ## Installation
 
 ### Prerequisites
 
 - [GitHub CLI](https://cli.github.com/) (`gh`) installed and authenticated
-- Go 1.21+ (for building from source)
+- `git`
+- Go 1.23+ if you are building from source
+- A repository whose base branch is `main` or `master`
 
 ### Install from source
 
 ```bash
-git clone https://github.com/calvin/gh-stacked.git
+git clone https://github.com/ArchAstro/gh-stacked.git
 cd gh-stacked
 make install
 ```
 
+This installs the extension into `~/.local/share/gh/extensions/gh-stacked/`.
+
 ### Verify installation
 
 ```bash
+gh stacked version
 gh stacked --help
 ```
 
-## Usage
+## How It Works
 
-### Create stacked PRs
+Run `gh stacked` from your feature branch, not from one of the generated stack branches.
 
-From your feature branch with multiple commits:
+Given a branch like `feature/auth` with commits:
+
+```text
+Add user model
+Add user validation
+Add user API
+```
+
+`gh stacked push` creates branches like:
+
+```text
+stack/feature/auth/01-add-user-model
+stack/feature/auth/02-add-user-validation
+stack/feature/auth/03-add-user-api
+```
+
+And PRs like:
+
+- PR 1: `stack/.../01-add-user-model` -> `main`
+- PR 2: `stack/.../02-add-user-validation` -> `stack/.../01-add-user-model`
+- PR 3: `stack/.../03-add-user-api` -> `stack/.../02-add-user-validation`
+
+That keeps each PR diff focused on one commit instead of the full feature branch.
+
+## Typical Workflow
 
 ```bash
+# Start a feature branch from main
+git checkout -b feature/user-auth
+
+# Make small commits; each commit becomes one PR
+git commit -m "Add user model"
+git commit -m "Add user validation"
+git commit -m "Add user API endpoints"
+
+# Preview the stack before creating anything
+gh stacked push --mode=preview
+
+# Create or update the stacked PRs
 gh stacked push
-```
 
-This will:
-1. Create a branch for each commit (e.g., `stack/feature/auth/01-add-user-model`)
-2. Push each branch to origin
-3. Create a PR for each commit, chained together
-4. Add navigation footer to each PR body
-
-### Preview before pushing
-
-```bash
-gh stacked push --preview
-```
-
-Shows what branches and PRs would be created without making any changes.
-
-### Check stack status
-
-```bash
+# Inspect the stack
 gh stacked status
-```
+gh stacked show
 
-Displays:
-- Each PR with its position in the stack
-- Merge status (PENDING, MERGEABLE, BLOCKED, WAITING)
-- PR links and diff stats
-
-### Amend a specific commit in the stack
-
-After making changes to address code review feedback:
-
-```bash
+# Address review feedback on stack position 2
 git add .
 gh stacked amend 2
-```
 
-The argument is the stack position (1, 2, 3, ...) as shown by `gh stacked status`.
-
-Alternatively, use the PR number directly with `--pr`:
-
-```bash
-git add .
-gh stacked amend --pr 123
-```
-
-This will:
-1. Create a fixup commit for the target commit
-2. Run an autosquash rebase to fold it in
-3. Force-push all affected branches
-
-### Merge the next PR
-
-When the first PR is approved and ready:
-
-```bash
+# Merge the first open PR in the stack
 gh stacked merge
 ```
 
-This will:
-1. Merge the first open PR via GitHub API
-2. Retarget the next PR to main
-3. Rebase remaining commits onto main
-4. Force-push all remaining branches
+### Useful Variants
 
-PRs are merged in stack order - the first open PR is always merged next.
-
-To merge without rebasing the rest of the stack:
-
-```bash
-gh stacked merge --no-rebase
-```
-
-### Merge the entire stack at once
-
-To squash all commits and merge as a single PR:
-
-```bash
-gh stacked merge-all
-```
-
-This will:
-1. Squash all commits into one
-2. Update and merge the last PR
-3. Close all other PRs in the stack
-4. Clean up all stack branches
-
-## How it works
-
-### Branch naming
-
-Each commit gets a branch named:
-```
-stack/<parent-branch>/<NN>-<slug>
-```
-
-For example, if you're on `feature/auth` with commits "Add user model" and "Add user API":
-```
-stack/feature/auth/01-add-user-model
-stack/feature/auth/02-add-user-api
-```
-
-### PR chaining
-
-PRs are chained so each targets the previous one:
-- PR #1: `stack/.../01-add-user-model` → `main`
-- PR #2: `stack/.../02-add-user-api` → `stack/.../01-add-user-model`
-
-This means reviewers see only the changes from that specific commit, not the cumulative diff.
-
-### Stack footer
-
-Each PR body includes a navigation footer:
-```
----
-📚 **Stack:** `feature/auth` (2/3) | ← #42 | → #44
-```
+- `gh stacked push --mode=draft` creates the PRs as drafts.
+- `gh stacked push --regroup` opens an interactive rebase before pushing so you can reorder or squash commits.
+- `gh stacked push --squash 2-4` combines commits 2 through 4 into a single PR before push.
+- `gh stacked amend --pr 123` targets a PR directly instead of using stack position.
+- `gh stacked merge-all` squashes the full stack into one PR, merges it, and closes the rest.
+- `gh stacked cleanup` removes dangling local commits and orphaned remote stack branches.
+- `gh stacked housekeeping` shows commit/PR matching and highlights drift in the stack.
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
-| `gh stacked push` | Create or update stacked PRs from commits |
-| `gh stacked push --preview` | Preview without creating PRs |
-| `gh stacked push --squash 2-4` | Squash commits 2-4 into one PR |
-| `gh stacked status` | Show current stack state |
-| `gh stacked show` | Show stack top-to-bottom with PR titles and links |
-| `gh stacked amend <position>` | Amend stack position with staged changes |
-| `gh stacked amend --pr <num>` | Amend by PR number instead of position |
-| `gh stacked merge` | Merge the first open PR and update the stack |
-| `gh stacked merge --no-rebase` | Merge without rebasing remaining |
-| `gh stacked merge-all` | Squash and merge entire stack as one PR |
+| `gh stacked push` | Create or update stacked PRs from commits on the current branch |
+| `gh stacked push --mode=preview` | Preview the stack without creating or updating PRs |
+| `gh stacked push --mode=draft` | Create stack PRs as drafts |
+| `gh stacked push --regroup` | Interactively reorder or squash commits before pushing |
+| `gh stacked push --squash 2-4` | Squash a commit range into one PR |
+| `gh stacked status` | Show current stack state with mergeability and review details |
+| `gh stacked show` | Show the stack top-to-bottom with PR titles and links |
+| `gh stacked amend <position>` | Amend a stack position using staged changes |
+| `gh stacked amend --pr <num>` | Amend by PR number instead of stack position |
+| `gh stacked merge` | Merge the first open PR and rebase the remaining stack |
+| `gh stacked merge --no-rebase` | Merge the first open PR without rebasing the remaining stack |
+| `gh stacked merge-all` | Squash and merge the entire stack as one PR |
+| `gh stacked cleanup` | Remove dangling commits and orphaned stack branches |
+| `gh stacked housekeeping` | Analyze local commits, remote branches, and PR state |
+| `gh stacked version` | Print the current version |
 
-## Flags
+## Tradeoffs And Shortcomings
 
-| Flag | Description |
-|------|-------------|
-| `--json` | Output as JSON (for scripting/automation) |
-| `--help` | Show help for any command |
+`gh-stacked` is opinionated. Those opinions make the happy path simple, but they come with real costs:
 
-## Example workflow
-
-```bash
-# Create a feature branch
-git checkout -b feature/user-auth
-
-# Make commits (each will become a PR)
-git commit -m "Add user model"
-git commit -m "Add user validation"
-git commit -m "Add user API endpoints"
-
-# Push as stacked PRs
-gh stacked push
-
-# Check status
-gh stacked status
-
-# After code review, fix stack position 2
-git add .
-gh stacked amend 2
-
-# When the first PR is approved, merge it
-gh stacked merge
-
-# Continue with the next PR, now targeting main
-gh stacked status
-```
+- It is best suited to individual contributors or small teams working on one stack owner at a time.
+- You do not work directly on `main`, but you do need to keep your feature branch rebased onto the latest base branch before `push` and `merge`. In a busy repository, that can mean frequent rebases.
+- The tool intentionally rewrites history. `push`, `amend`, and `merge` update stack branches with force-pushes so the one-commit-to-one-PR mapping stays intact.
+- Because of that rewriting, stack branches are not great shared collaboration branches and commit SHAs are not stable over time.
+- It optimizes for clean review diffs, not for preserving the richest possible branch history. If long-lived immutable history is the priority, this workflow is a worse fit.
+- Commit order and commit subjects matter. Reordering, squashing, or heavily rewriting a stack can change the commit-to-PR mapping and may require cleanup.
+- Base branch detection currently assumes `origin/main`, `origin/master`, `main`, or `master`.
 
 ## Development
 
@@ -214,17 +155,17 @@ make clean         # Remove build artifacts
 make fmt           # Format code
 make lint          # Run linter (requires golangci-lint)
 make dev           # Format, test, and build
-make check         # Format, lint, and test (pre-commit check)
+make check         # Format, lint, and test
 ```
 
 ## Architecture
 
-```
-cmd/           # Cobra commands (push, status, amend, merge)
+```text
+cmd/           # Cobra commands (push, status, amend, merge, cleanup)
 internal/
   git/         # Git operations wrapper
   github/      # GitHub API client
-  stack/       # Stack logic (branch naming, PR entries)
+  stack/       # Stack logic (branch naming, PR analysis, housekeeping)
 ```
 
 ## License
