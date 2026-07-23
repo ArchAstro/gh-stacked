@@ -14,9 +14,10 @@ import (
 )
 
 var (
-	rebasePR     int
-	rebaseActor  string
-	rebaseDryRun bool
+	rebasePR                    int
+	rebaseActor                 string
+	rebaseDryRun                bool
+	rebaseRejectWorkflowChanges bool
 )
 
 var (
@@ -58,6 +59,7 @@ func init() {
 	rebaseCmd.Flags().IntVar(&rebasePR, "pr", 0, "Pull request number belonging to the stack")
 	rebaseCmd.Flags().StringVar(&rebaseActor, "actor", "", "Require this GitHub user to have repository write access")
 	rebaseCmd.Flags().BoolVar(&rebaseDryRun, "dry-run", false, "Preflight the complete rebase without pushing refs")
+	rebaseCmd.Flags().BoolVar(&rebaseRejectWorkflowChanges, "reject-workflow-changes", false, "Reject stacks that modify .github/workflows before publishing refs")
 }
 
 func hasStackWritePermission(permission string) bool {
@@ -175,6 +177,22 @@ func writeRebaseOutput(output RebaseOutput) error {
 	return nil
 }
 
+func rebasedStackChangesWorkflows(g git.GitOperations, commits []git.Commit) (bool, error) {
+	for _, commit := range commits {
+		workflowPaths, err := g.Run(
+			"diff-tree", "--no-commit-id", "--name-only", "-r",
+			commit.Hash, "--", ".github/workflows",
+		)
+		if err != nil {
+			return false, fmt.Errorf("inspect rebased commit %s for workflow changes: %w", commit.Hash, err)
+		}
+		if strings.TrimSpace(workflowPaths) != "" {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func runRebase(cmd *cobra.Command, args []string) error {
 	if rebasePR <= 0 {
 		return fmt.Errorf("--pr must be a positive pull request number")
@@ -229,6 +247,15 @@ func runRebase(cmd *cobra.Command, args []string) error {
 		}
 		if len(result.Commits) != len(plan.Entries) {
 			return fmt.Errorf("preflight returned %d commits for %d pull requests", len(result.Commits), len(plan.Entries))
+		}
+		if rebaseRejectWorkflowChanges {
+			changesWorkflows, err := rebasedStackChangesWorkflows(g, result.Commits)
+			if err != nil {
+				return err
+			}
+			if changesWorkflows {
+				return fmt.Errorf("stack modifies .github/workflows and the configured publication token cannot update workflow files")
+			}
 		}
 
 		// GitHub PR metadata and Git refs are separate systems. Re-read both

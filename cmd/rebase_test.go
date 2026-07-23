@@ -39,6 +39,7 @@ func setupRebaseCommandTest(t *testing.T) (*git.MockGit, *github.MockGitHub) {
 	oldPR := rebasePR
 	oldActor := rebaseActor
 	oldDryRun := rebaseDryRun
+	oldRejectWorkflowChanges := rebaseRejectWorkflowChanges
 	oldJSON := jsonOutput
 	t.Cleanup(func() {
 		rebaseNewGit = oldGit
@@ -46,6 +47,7 @@ func setupRebaseCommandTest(t *testing.T) (*git.MockGit, *github.MockGitHub) {
 		rebasePR = oldPR
 		rebaseActor = oldActor
 		rebaseDryRun = oldDryRun
+		rebaseRejectWorkflowChanges = oldRejectWorkflowChanges
 		jsonOutput = oldJSON
 	})
 
@@ -54,6 +56,7 @@ func setupRebaseCommandTest(t *testing.T) (*git.MockGit, *github.MockGitHub) {
 	rebasePR = 102
 	rebaseActor = ""
 	rebaseDryRun = false
+	rebaseRejectWorkflowChanges = false
 	jsonOutput = false
 
 	return mockGit, mockGH
@@ -99,6 +102,37 @@ func TestRunRebaseDryRunDoesNotPushAnyRef(t *testing.T) {
 	}
 	if mockGit.WasCalled("AtomicPushStackRefs") {
 		t.Fatal("dry-run pushed stack refs")
+	}
+}
+
+func TestRunRebaseRejectsWorkflowChangesBeforePublishing(t *testing.T) {
+	mockGit, _ := setupRebaseCommandTest(t)
+	rebaseRejectWorkflowChanges = true
+	mockGit.OnRun = func(args []string) (string, error) {
+		if len(args) > 4 && args[0] == "diff-tree" && args[4] == "new-model" {
+			return ".github/workflows/deploy.yml\n", nil
+		}
+		return "", nil
+	}
+
+	err := runRebase(nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "cannot update workflow files") {
+		t.Fatalf("expected workflow permission error, got %v", err)
+	}
+	if mockGit.WasCalled("AtomicPushStackRefs") {
+		t.Fatal("published refs for a stack containing workflow changes")
+	}
+}
+
+func TestRunRebaseAllowsStacksWithoutWorkflowChangesWhenRestricted(t *testing.T) {
+	mockGit, _ := setupRebaseCommandTest(t)
+	rebaseRejectWorkflowChanges = true
+
+	if err := runRebase(nil, nil); err != nil {
+		t.Fatalf("ordinary stack was rejected: %v", err)
+	}
+	if !mockGit.WasCalled("AtomicPushStackRefs") {
+		t.Fatal("ordinary stack was not published")
 	}
 }
 

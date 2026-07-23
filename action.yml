@@ -9,12 +9,16 @@ inputs:
     description: GitHub login that must have write access to the repository
     required: true
   github-token:
-    description: GitHub App token used for API access; checkout must use the same token for pushes
+    description: GitHub token used for API access; checkout must use the same token for pushes
     required: true
   dry-run:
     description: Validate and rebase locally without updating remote refs
     required: false
     default: "false"
+  allow-workflow-changes:
+    description: Permit stacks that modify .github/workflows; requires a token with workflow publication permission
+    required: false
+    default: "true"
 
 outputs:
   stack-id:
@@ -47,6 +51,7 @@ runs:
         INPUT_PR_NUMBER: ${{ inputs.pr-number }}
         INPUT_ACTOR: ${{ inputs.actor }}
         INPUT_DRY_RUN: ${{ inputs.dry-run }}
+        INPUT_ALLOW_WORKFLOW_CHANGES: ${{ inputs.allow-workflow-changes }}
       run: |
         case "$INPUT_DRY_RUN" in
           true|false) ;;
@@ -55,10 +60,20 @@ runs:
             exit 2
             ;;
         esac
+        case "$INPUT_ALLOW_WORKFLOW_CHANGES" in
+          true|false) ;;
+          *)
+            echo "::error::allow-workflow-changes must be either true or false"
+            exit 2
+            ;;
+        esac
 
         args=(rebase --pr "$INPUT_PR_NUMBER" --actor "$INPUT_ACTOR" --json)
         if [[ "$INPUT_DRY_RUN" == "true" ]]; then
           args+=(--dry-run)
+        fi
+        if [[ "$INPUT_ALLOW_WORKFLOW_CHANGES" == "false" ]]; then
+          args+=(--reject-workflow-changes)
         fi
 
         result="$("$RUNNER_TEMP/gh-stacked-rebase" "${args[@]}")"
