@@ -9,7 +9,7 @@ inputs:
     description: GitHub login that must have write access to the repository
     required: true
   github-token:
-    description: GitHub token used for API access; checkout must use the same token for pushes
+    description: GitHub token used for PR discovery, actor authorization, and other API access
     required: true
   dry-run:
     description: Validate and rebase locally without updating remote refs

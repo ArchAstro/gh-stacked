@@ -132,12 +132,18 @@ least-privilege GitHub App with:
 - **Metadata: read** to verify the commenter's repository permission. GitHub
   Apps receive this permission automatically.
 
-The example uses the App token for checkout, API calls, pushes, and comments so
-normal pull-request CI runs after the rewritten refs are published. Before
-enabling it, replace `REPLACE_WITH_FULL_COMMIT_SHA` with the reviewed
-`gh-stacked` commit SHA. Do not pass a write-capable token to a mutable action
-tag or branch. The workflow also applies a coarse trusted-association gate
-before minting the App token; `gh stacked rebase --actor` remains the
+The action's `github-token` input is used for PR discovery and actor
+authorization. Git publication uses the credential configured on the checkout's
+`origin` remote. The example uses one App token for both boundaries, but a
+consumer may deliberately split them—for example, an App token with pull-request
+access for API calls and a release token with contents access for pushes.
+Whichever checkout credential is used must be able to update every stack ref so
+normal pull-request CI runs after publication.
+
+Before enabling the workflow, replace `REPLACE_WITH_FULL_COMMIT_SHA` with the
+reviewed `gh-stacked` commit SHA. Do not pass a write-capable token to a mutable
+action tag or branch. The workflow also applies a coarse trusted-association
+gate before minting the App token; `gh stacked rebase --actor` remains the
 authoritative repository write-permission check.
 
 ### Useful Variants
