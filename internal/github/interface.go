@@ -15,6 +15,7 @@ type GitHubOperations interface {
 	MarkPullRequestReadyForReview(number int) error
 	AddLabelToIssue(number int, label string) error
 	RemoveLabelFromIssue(number int, label string) error
+	GetRepositoryPermission(username string) (string, error)
 }
 
 // Verify Client implements GitHubOperations at compile time

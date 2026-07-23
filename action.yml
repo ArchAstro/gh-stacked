@@ -1,0 +1,67 @@
+name: Rebase a gh-stacked PR stack
+description: Preflight and atomically rebase every PR ref in a gh-stacked stack
+
+inputs:
+  pr-number:
+    description: Any open pull request number in the stack
+    required: true
+  actor:
+    description: GitHub login that must have write access to the repository
+    required: true
+  github-token:
+    description: GitHub App token used for API access; checkout must use the same token for pushes
+    required: true
+  dry-run:
+    description: Validate and rebase locally without updating remote refs
+    required: false
+    default: "false"
+
+outputs:
+  stack-id:
+    description: The feature-branch identifier for the rebased stack
+    value: ${{ steps.rebase.outputs.stack-id }}
+  base-branch:
+    description: The root pull request base branch used for the rebase
+    value: ${{ steps.rebase.outputs.base-branch }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Go
+      uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+      with:
+        go-version-file: ${{ github.action_path }}/go.mod
+        cache: false
+
+    - name: Build gh-stacked
+      shell: bash
+      run: |
+        cd "$GITHUB_ACTION_PATH"
+        go build -trimpath -o "$RUNNER_TEMP/gh-stacked-rebase" .
+
+    - name: Rebase stack
+      id: rebase
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        INPUT_PR_NUMBER: ${{ inputs.pr-number }}
+        INPUT_ACTOR: ${{ inputs.actor }}
+        INPUT_DRY_RUN: ${{ inputs.dry-run }}
+      run: |
+        case "$INPUT_DRY_RUN" in
+          true|false) ;;
+          *)
+            echo "::error::dry-run must be either true or false"
+            exit 2
+            ;;
+        esac
+
+        args=(rebase --pr "$INPUT_PR_NUMBER" --actor "$INPUT_ACTOR" --json)
+        if [[ "$INPUT_DRY_RUN" == "true" ]]; then
+          args+=(--dry-run)
+        fi
+
+        result="$("$RUNNER_TEMP/gh-stacked-rebase" "${args[@]}")"
+        echo "$result"
+        echo "stack-id=$(jq -r '.stack_id' <<<"$result")" >> "$GITHUB_OUTPUT"
+        echo "base-branch=$(jq -r '.base_branch' <<<"$result")" >> "$GITHUB_OUTPUT"

@@ -18,6 +18,9 @@ type GitOperations interface {
 	Run(args ...string) (string, error)
 	ListRemoteBranches(pattern string) ([]string, error)
 	ApplyPatch(patch string, staged bool) error
+	PrepareStackRebase(baseRef string, branches []string) (*StackRebaseResult, error)
+	AtomicPushStackRefs(remote string, updates []RefUpdate) error
+	RemoteRefOID(remote string, branch string) (string, error)
 }
 
 // Verify Git implements GitOperations at compile time

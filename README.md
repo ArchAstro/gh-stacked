@@ -99,6 +99,47 @@ gh stacked amend 2
 gh stacked merge
 ```
 
+## Rebase A Stack From GitHub
+
+`gh stacked rebase` updates a complete remote stack without changing the
+caller's branch or worktree:
+
+```bash
+# Rebase the stack containing PR #123 onto the latest origin/main
+gh stacked rebase --pr 123
+
+# Run the complete topology and conflict preflight without pushing
+gh stacked rebase --pr 123 --dry-run
+```
+
+The command validates the open PR base chain, rebases the cumulative stack tip
+inside a temporary worktree, and reconstructs the one-commit-per-PR refs. It
+only publishes after the whole rebase succeeds, using one atomic push with an
+explicit force-with-lease for every old remote OID. A conflict, malformed
+stack, or concurrent stack-ref update leaves all remote stack branches unchanged.
+If the base branch moves during publication, the command detects it from the
+remote and retries the complete stack up to three times. Repeated base movement
+can leave the stack coherently based on the immediately previous base tip; the
+command reports that state as a failure so it can be retried.
+
+To expose `/stack rebase` on pull requests, copy
+[`examples/rebase-stack-on-comment.yml`](examples/rebase-stack-on-comment.yml)
+into the consuming repository's `.github/workflows` directory. Configure a
+least-privilege GitHub App with:
+
+- **Contents: read and write** to atomically update stack refs.
+- **Pull requests: read and write** to discover the stack and post results.
+- **Metadata: read** to verify the commenter's repository permission. GitHub
+  Apps receive this permission automatically.
+
+The example uses the App token for checkout, API calls, pushes, and comments so
+normal pull-request CI runs after the rewritten refs are published. Before
+enabling it, replace `REPLACE_WITH_FULL_COMMIT_SHA` with the reviewed
+`gh-stacked` commit SHA. Do not pass a write-capable token to a mutable action
+tag or branch. The workflow also applies a coarse trusted-association gate
+before minting the App token; `gh stacked rebase --actor` remains the
+authoritative repository write-permission check.
+
 ### Useful Variants
 
 - `gh stacked push --mode=draft` creates the PRs as drafts.
@@ -124,6 +165,8 @@ gh stacked merge
 | `gh stacked amend --pr <num>` | Amend by PR number instead of stack position |
 | `gh stacked merge` | Merge the first open PR and rebase the remaining stack |
 | `gh stacked merge --no-rebase` | Merge the first open PR without rebasing the remaining stack |
+| `gh stacked rebase --pr <number>` | Rebase and atomically update a complete remote stack |
+| `gh stacked rebase --pr <number> --dry-run` | Preflight a remote stack rebase without pushing |
 | `gh stacked merge-all` | Squash and merge the entire stack as one PR |
 | `gh stacked cleanup` | Remove dangling commits and orphaned stack branches |
 | `gh stacked housekeeping` | Analyze local commits, remote branches, and PR state |

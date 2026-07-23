@@ -11,7 +11,7 @@ import (
 )
 
 var nonAlphaNum = regexp.MustCompile(`[^a-z0-9]+`)
-var stackBranchRe = regexp.MustCompile(`^stack/.+/(\d{2})-(.+)$`)
+var stackBranchRe = regexp.MustCompile(`^stack/.+/(\d+)-(.+)$`)
 
 // ExistingBranchInfo holds info about an existing remote stack branch
 type ExistingBranchInfo struct {
@@ -111,7 +111,7 @@ func StackBranchName(parentBranch string, position int, commitMsg string) string
 	return fmt.Sprintf("stack/%s/%02d-%s", parentBranch, position, slug)
 }
 
-var stackBranchPattern = regexp.MustCompile(`^stack/(.+)/(\d{2})-[a-z0-9-]+$`)
+var stackBranchPattern = regexp.MustCompile(`^stack/(.+)/(\d+)-[a-z0-9-]+$`)
 
 func ParseStackBranch(branch string) (parentBranch string, position int, ok bool) {
 	matches := stackBranchPattern.FindStringSubmatch(branch)

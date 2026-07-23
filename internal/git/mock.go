@@ -20,9 +20,14 @@ type MockGit struct {
 	Errors map[string]error
 
 	// Behavior hooks
-	OnPushBranch   func(remote, branch string, force bool) error
-	OnCreateBranch func(name, hash string) error
-	OnRun          func(args []string) (string, error) // Custom Run handler for testing
+	OnPushBranch          func(remote, branch string, force bool) error
+	OnCreateBranch        func(name, hash string) error
+	OnRun                 func(args []string) (string, error) // Custom Run handler for testing
+	RebaseResult          *StackRebaseResult
+	AtomicUpdates         []RefUpdate
+	OnPrepareStackRebase  func(baseRef string, branches []string)
+	RemoteRefOIDs         map[string]string
+	OnAtomicPushStackRefs func(remote string, updates []RefUpdate)
 }
 
 type MockCall struct {
@@ -36,6 +41,7 @@ func NewMockGit() *MockGit {
 		BaseBranch:    "main",
 		Commits:       []Commit{},
 		Errors:        make(map[string]error),
+		RemoteRefOIDs: make(map[string]string),
 	}
 }
 
@@ -145,6 +151,34 @@ func (m *MockGit) ListRemoteBranches(pattern string) ([]string, error) {
 func (m *MockGit) ApplyPatch(patch string, staged bool) error {
 	m.Calls = append(m.Calls, MockCall{Method: "ApplyPatch", Args: []interface{}{patch, staged}})
 	return m.Errors["ApplyPatch"]
+}
+
+func (m *MockGit) PrepareStackRebase(baseRef string, branches []string) (*StackRebaseResult, error) {
+	m.Calls = append(m.Calls, MockCall{Method: "PrepareStackRebase", Args: []interface{}{baseRef, branches}})
+	if m.OnPrepareStackRebase != nil {
+		m.OnPrepareStackRebase(baseRef, branches)
+	}
+	if err := m.Errors["PrepareStackRebase"]; err != nil {
+		return nil, err
+	}
+	return m.RebaseResult, nil
+}
+
+func (m *MockGit) AtomicPushStackRefs(remote string, updates []RefUpdate) error {
+	m.Calls = append(m.Calls, MockCall{Method: "AtomicPushStackRefs", Args: []interface{}{remote, updates}})
+	m.AtomicUpdates = append([]RefUpdate(nil), updates...)
+	if m.OnAtomicPushStackRefs != nil {
+		m.OnAtomicPushStackRefs(remote, updates)
+	}
+	return m.Errors["AtomicPushStackRefs"]
+}
+
+func (m *MockGit) RemoteRefOID(remote string, branch string) (string, error) {
+	m.Calls = append(m.Calls, MockCall{Method: "RemoteRefOID", Args: []interface{}{remote, branch}})
+	if err := m.Errors["RemoteRefOID"]; err != nil {
+		return "", err
+	}
+	return m.RemoteRefOIDs[remote+"/"+branch], nil
 }
 
 // WasCalled checks if method was called

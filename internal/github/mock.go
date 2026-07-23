@@ -19,13 +19,16 @@ type MockGitHub struct {
 	Errors map[string]error
 
 	// Capture created/updated PRs for assertions
-	CreatedPRs     []CreatePullRequestInput
-	UpdatedPRs     []UpdatedPR
-	MergedPRs      []int
-	ClosedPRs      []int
-	MarkedReadyPRs []int
-	AddedLabels    []MockLabel
-	RemovedLabels  []MockLabel
+	CreatedPRs            []CreatePullRequestInput
+	UpdatedPRs            []UpdatedPR
+	MergedPRs             []int
+	ClosedPRs             []int
+	MarkedReadyPRs        []int
+	AddedLabels           []MockLabel
+	RemovedLabels         []MockLabel
+	RepositoryPermissions map[string]string
+	OnListPullRequests    func(head string, callNumber int) []PullRequest
+	ListPullRequestCalls  int
 }
 
 type MockCall struct {
@@ -46,13 +49,14 @@ type MockLabel struct {
 
 func NewMockGitHub() *MockGitHub {
 	return &MockGitHub{
-		Repo:         Repository{Owner: "test", Name: "repo"},
-		PRs:          make(map[string][]PullRequest),
-		NextPRNumber: 100,
-		Errors:       make(map[string]error),
-		CreatedPRs:   []CreatePullRequestInput{},
-		UpdatedPRs:   []UpdatedPR{},
-		MergedPRs:    []int{},
+		Repo:                  Repository{Owner: "test", Name: "repo"},
+		PRs:                   make(map[string][]PullRequest),
+		NextPRNumber:          100,
+		Errors:                make(map[string]error),
+		CreatedPRs:            []CreatePullRequestInput{},
+		UpdatedPRs:            []UpdatedPR{},
+		MergedPRs:             []int{},
+		RepositoryPermissions: make(map[string]string),
 	}
 }
 
@@ -111,17 +115,18 @@ func (m *MockGitHub) GetPullRequest(number int) (*PullRequestStatus, error) {
 		for _, pr := range prs {
 			if pr.Number == number {
 				return &PullRequestStatus{
-					Number:     pr.Number,
-					Title:      pr.Title,
-					Body:       pr.Body,
-					URL:        pr.URL,
-					Branch:     pr.Head.Ref,
-					BaseBranch: pr.Base.Ref,
-					State:      pr.State,
-					Draft:      pr.Draft,
-					Mergeable:  pr.Mergeable,
-					Additions:  pr.Additions,
-					Deletions:  pr.Deletions,
+					Number:         pr.Number,
+					Title:          pr.Title,
+					Body:           pr.Body,
+					URL:            pr.URL,
+					Branch:         pr.Head.Ref,
+					BaseBranch:     pr.Base.Ref,
+					State:          pr.State,
+					Draft:          pr.Draft,
+					Mergeable:      pr.Mergeable,
+					Additions:      pr.Additions,
+					Deletions:      pr.Deletions,
+					HeadRepository: pr.Head.Repo.FullName,
 				}, nil
 			}
 		}
@@ -131,8 +136,12 @@ func (m *MockGitHub) GetPullRequest(number int) (*PullRequestStatus, error) {
 
 func (m *MockGitHub) ListPullRequests(head string) ([]PullRequest, error) {
 	m.Calls = append(m.Calls, MockCall{Method: "ListPullRequests", Args: []interface{}{head}})
+	m.ListPullRequestCalls++
 	if err := m.Errors["ListPullRequests"]; err != nil {
 		return nil, err
+	}
+	if m.OnListPullRequests != nil {
+		return m.OnListPullRequests(head, m.ListPullRequestCalls), nil
 	}
 	// Only return open PRs
 	var openPRs []PullRequest
@@ -206,6 +215,14 @@ func (m *MockGitHub) RemoveLabelFromIssue(number int, label string) error {
 	return nil
 }
 
+func (m *MockGitHub) GetRepositoryPermission(username string) (string, error) {
+	m.Calls = append(m.Calls, MockCall{Method: "GetRepositoryPermission", Args: []interface{}{username}})
+	if err := m.Errors["GetRepositoryPermission"]; err != nil {
+		return "", err
+	}
+	return m.RepositoryPermissions[username], nil
+}
+
 // AddExistingPR sets up an existing PR for a branch
 func (m *MockGitHub) AddExistingPR(branch string, number int, title string) {
 	m.AddExistingPRWithState(branch, number, title, "open")
@@ -247,6 +264,7 @@ func (m *MockGitHub) AddExistingPRWithDraft(branch string, number int, title str
 		Draft:  draft,
 	}
 	pr.Head.Ref = branch
+	pr.Head.Repo.FullName = m.Repo.Owner + "/" + m.Repo.Name
 	pr.Base.Ref = base
 	m.PRs[branch] = append(m.PRs[branch], pr)
 }

@@ -39,6 +39,7 @@ func TestStackBranchName(t *testing.T) {
 		{"feature/auth", 1, "Add User model", "stack/feature/auth/01-add-user-model"},
 		{"feature/auth", 2, "Add User API", "stack/feature/auth/02-add-user-api"},
 		{"main-work", 10, "Fix bug", "stack/main-work/10-fix-bug"},
+		{"large-stack", 100, "Keep parsing", "stack/large-stack/100-keep-parsing"},
 	}
 
 	for _, tt := range tests {
@@ -61,6 +62,7 @@ func TestParseStackBranch(t *testing.T) {
 		{"stack/feature/auth/01-add-user-model", "feature/auth", 1, true},
 		{"stack/feature/auth/02-add-api", "feature/auth", 2, true},
 		{"stack/main-work/10-fix-bug", "main-work", 10, true},
+		{"stack/large-stack/100-keep-parsing", "large-stack", 100, true},
 		{"feature/auth", "", 0, false},
 		{"not-a-stack-branch", "", 0, false},
 	}
@@ -189,7 +191,7 @@ func TestGeneratePRBody_WithCommitBody(t *testing.T) {
 
 func TestGeneratePRBody_FirstPR(t *testing.T) {
 	entries := []PREntry{
-		{Position: 1, PRNumber: 0},  // This PR not yet created
+		{Position: 1, PRNumber: 0}, // This PR not yet created
 		{Position: 2, PRNumber: 43, PRURL: "https://github.com/org/repo/pull/43"},
 	}
 
@@ -204,7 +206,7 @@ func TestGeneratePRBody_FirstPR(t *testing.T) {
 func TestGeneratePRBody_LastPR(t *testing.T) {
 	entries := []PREntry{
 		{Position: 1, PRNumber: 42, PRURL: "https://github.com/org/repo/pull/42"},
-		{Position: 2, PRNumber: 0},  // This PR not yet created
+		{Position: 2, PRNumber: 0}, // This PR not yet created
 	}
 
 	body := GeneratePRBody("Add API", "", "feature/auth", entries, 2)

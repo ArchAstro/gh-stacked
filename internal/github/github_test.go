@@ -3,8 +3,32 @@ package github
 
 import (
 	"errors"
+	"io"
+	"net/http"
+	"strings"
 	"testing"
+
+	"github.com/cli/go-gh/v2/pkg/api"
 )
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
+}
+
+func newRESTContractClient(t *testing.T, handler roundTripFunc) *Client {
+	t.Helper()
+	rest, err := api.NewRESTClient(api.ClientOptions{
+		Host:      "github.com",
+		AuthToken: "test-token",
+		Transport: handler,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &Client{rest: rest, repo: Repository{Owner: "ArchAstro", Name: "firstlanding"}}
+}
 
 func TestNewClient(t *testing.T) {
 	// This test verifies the client can be created
@@ -21,10 +45,10 @@ func TestNewClient(t *testing.T) {
 func TestCreatePullRequestInput(t *testing.T) {
 	// Test the PR input struct construction (no actual API call)
 	input := CreatePullRequestInput{
-		Title:  "Add User model",
-		Body:   "Description here",
-		Head:   "stack/feature/01-add-user",
-		Base:   "main",
+		Title: "Add User model",
+		Body:  "Description here",
+		Head:  "stack/feature/01-add-user",
+		Base:  "main",
 	}
 
 	if input.Title != "Add User model" {
@@ -46,6 +70,74 @@ func TestPullRequestStatus(t *testing.T) {
 
 	if !status.Mergeable {
 		t.Error("expected mergeable")
+	}
+}
+
+func TestGetPullRequestDecodesHeadRepository(t *testing.T) {
+	client := newRESTContractClient(t, func(request *http.Request) (*http.Response, error) {
+		if request.URL.Path != "/repos/ArchAstro/firstlanding/pulls/42" {
+			t.Fatalf("unexpected API path: %s", request.URL.Path)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body: io.NopCloser(strings.NewReader(`{
+				"number": 42,
+				"state": "open",
+				"head": {"ref": "stack/feature/x/01-one", "repo": {"full_name": "ArchAstro/firstlanding"}},
+				"base": {"ref": "main"}
+			}`)),
+		}, nil
+	})
+
+	pullRequest, err := client.GetPullRequest(42)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pullRequest.HeadRepository != "ArchAstro/firstlanding" {
+		t.Fatalf("head repository = %q", pullRequest.HeadRepository)
+	}
+}
+
+func TestListPullRequestsURLQueryPreservesLegalRefCharacters(t *testing.T) {
+	const branch = "stack/feature/a&b%25/01-one"
+	client := newRESTContractClient(t, func(request *http.Request) (*http.Response, error) {
+		if got := request.URL.Query().Get("head"); got != "ArchAstro:"+branch {
+			t.Fatalf("head query = %q, want %q", got, "ArchAstro:"+branch)
+		}
+		if got := request.URL.Query().Get("state"); got != "open" {
+			t.Fatalf("state query = %q", got)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`[]`)),
+		}, nil
+	})
+
+	if _, err := client.ListPullRequests(branch); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestGetRepositoryPermissionUsesCollaboratorPermissionEndpoint(t *testing.T) {
+	client := newRESTContractClient(t, func(request *http.Request) (*http.Response, error) {
+		if request.URL.Path != "/repos/ArchAstro/firstlanding/collaborators/calvin-archastro/permission" {
+			t.Fatalf("unexpected API path: %s", request.URL.Path)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"permission":"maintain"}`)),
+		}, nil
+	})
+
+	permission, err := client.GetRepositoryPermission("calvin-archastro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if permission != "maintain" {
+		t.Fatalf("permission = %q", permission)
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os/exec"
 	"regexp"
 	"strings"
@@ -116,7 +117,10 @@ type PullRequest struct {
 	Merged    bool   `json:"merged"`
 	Mergeable bool   `json:"mergeable"`
 	Head      struct {
-		Ref string `json:"ref"`
+		Ref  string `json:"ref"`
+		Repo struct {
+			FullName string `json:"full_name"`
+		} `json:"repo"`
 	} `json:"head"`
 	Base struct {
 		Ref string `json:"ref"`
@@ -196,6 +200,7 @@ type PullRequestStatus struct {
 	ChangesRequested bool
 	Additions        int
 	Deletions        int
+	HeadRepository   string
 }
 
 func (c *Client) GetPullRequest(number int) (*PullRequestStatus, error) {
@@ -208,23 +213,26 @@ func (c *Client) GetPullRequest(number int) (*PullRequestStatus, error) {
 	}
 
 	return &PullRequestStatus{
-		Number:     pr.Number,
-		Title:      pr.Title,
-		Body:       pr.Body,
-		URL:        pr.URL,
-		Branch:     pr.Head.Ref,
-		BaseBranch: pr.Base.Ref,
-		State:      pr.State,
-		Draft:      pr.Draft,
-		Mergeable:  pr.Mergeable,
-		Additions:  pr.Additions,
-		Deletions:  pr.Deletions,
+		Number:         pr.Number,
+		Title:          pr.Title,
+		Body:           pr.Body,
+		URL:            pr.URL,
+		Branch:         pr.Head.Ref,
+		BaseBranch:     pr.Base.Ref,
+		State:          pr.State,
+		Draft:          pr.Draft,
+		Mergeable:      pr.Mergeable,
+		Additions:      pr.Additions,
+		Deletions:      pr.Deletions,
+		HeadRepository: pr.Head.Repo.FullName,
 	}, nil
 }
 
 func (c *Client) ListPullRequests(head string) ([]PullRequest, error) {
-	path := fmt.Sprintf("repos/%s/%s/pulls?head=%s:%s&state=open",
-		c.repo.Owner, c.repo.Name, c.repo.Owner, head)
+	query := url.Values{}
+	query.Set("head", c.repo.Owner+":"+head)
+	query.Set("state", "open")
+	path := fmt.Sprintf("repos/%s/%s/pulls?%s", c.repo.Owner, c.repo.Name, query.Encode())
 
 	var prs []PullRequest
 	err := c.rest.Get(path, &prs)
@@ -232,8 +240,10 @@ func (c *Client) ListPullRequests(head string) ([]PullRequest, error) {
 }
 
 func (c *Client) ListAllPullRequests(head string) ([]PullRequest, error) {
-	path := fmt.Sprintf("repos/%s/%s/pulls?head=%s:%s&state=all",
-		c.repo.Owner, c.repo.Name, c.repo.Owner, head)
+	query := url.Values{}
+	query.Set("head", c.repo.Owner+":"+head)
+	query.Set("state", "all")
+	path := fmt.Sprintf("repos/%s/%s/pulls?%s", c.repo.Owner, c.repo.Name, query.Encode())
 
 	var prs []PullRequest
 	err := c.rest.Get(path, &prs)
@@ -342,4 +352,15 @@ func (c *Client) RemoveLabelFromIssue(number int, label string) error {
 		return err
 	}
 	return nil
+}
+
+func (c *Client) GetRepositoryPermission(username string) (string, error) {
+	path := fmt.Sprintf("repos/%s/%s/collaborators/%s/permission", c.repo.Owner, c.repo.Name, username)
+	var response struct {
+		Permission string `json:"permission"`
+	}
+	if err := c.rest.Get(path, &response); err != nil {
+		return "", err
+	}
+	return response.Permission, nil
 }
