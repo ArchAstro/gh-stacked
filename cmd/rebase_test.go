@@ -29,6 +29,8 @@ func setupRebaseCommandTest(t *testing.T) (*git.MockGit, *github.MockGitHub) {
 		},
 	}
 	mockGit.RemoteRefOIDs["origin/main"] = "base-old"
+	mockGit.RemoteRefOIDs["origin/stack/feature/auth/01-add-model"] = "old-model"
+	mockGit.RemoteRefOIDs["origin/stack/feature/auth/02-add-api"] = "old-api"
 
 	mockGH := github.NewMockGitHub()
 	mockGH.AddExistingPRWithBase("stack/feature/auth/01-add-model", 101, "Add model", "open", false, "main")
@@ -80,7 +82,7 @@ func TestRunRebasePublishesValidatedStackAtomically(t *testing.T) {
 	}
 }
 
-func TestRunRebaseConflictDoesNotPushAnyRef(t *testing.T) {
+func TestRunRebasePreparationFailureDoesNotPushAnyRef(t *testing.T) {
 	mockGit, _ := setupRebaseCommandTest(t)
 	mockGit.Errors["PrepareStackRebase"] = errors.New("content conflict")
 
@@ -90,6 +92,74 @@ func TestRunRebaseConflictDoesNotPushAnyRef(t *testing.T) {
 	}
 	if mockGit.WasCalled("AtomicPushStackRefs") {
 		t.Fatal("atomic push ran after rebase conflict")
+	}
+}
+
+func TestRunRebasePublishesPrefixBeforeConflict(t *testing.T) {
+	mockGit, _ := setupRebaseCommandTest(t)
+	mockGit.RebaseResult = &git.StackRebaseResult{
+		BaseOID:       "base-old",
+		Commits:       []git.Commit{{Hash: "new-model", Subject: "Add model"}},
+		BlockedBranch: "stack/feature/auth/02-add-api",
+		BlockedReason: "content conflict",
+		OldOIDs: map[string]string{
+			"stack/feature/auth/01-add-model": "old-model",
+			"stack/feature/auth/02-add-api":   "old-api",
+		},
+	}
+
+	if err := runRebase(nil, nil); err != nil {
+		t.Fatalf("partial rebase failed: %v", err)
+	}
+	if len(mockGit.AtomicUpdates) != 1 {
+		t.Fatalf("expected only the safe prefix update, got %#v", mockGit.AtomicUpdates)
+	}
+	if got := mockGit.AtomicUpdates[0]; got.Branch != "stack/feature/auth/01-add-model" || got.NewOID != "new-model" {
+		t.Fatalf("unexpected prefix update: %#v", got)
+	}
+}
+
+func TestRunRebaseRootConflictLeavesEveryRefUnchanged(t *testing.T) {
+	mockGit, _ := setupRebaseCommandTest(t)
+	mockGit.RebaseResult = &git.StackRebaseResult{
+		BaseOID:       "base-old",
+		BlockedBranch: "stack/feature/auth/01-add-model",
+		BlockedReason: "content conflict",
+		OldOIDs: map[string]string{
+			"stack/feature/auth/01-add-model": "old-model",
+			"stack/feature/auth/02-add-api":   "old-api",
+		},
+	}
+
+	if err := runRebase(nil, nil); err != nil {
+		t.Fatalf("root conflict should be reported as a partial result: %v", err)
+	}
+	if mockGit.WasCalled("AtomicPushStackRefs") {
+		t.Fatal("root conflict published a stack ref")
+	}
+}
+
+func TestRunRebaseReportsPublishedPrefixWhenBaseMoves(t *testing.T) {
+	mockGit, _ := setupRebaseCommandTest(t)
+	mockGit.RebaseResult = &git.StackRebaseResult{
+		BaseOID:       "base-old",
+		Commits:       []git.Commit{{Hash: "new-model", Subject: "Add model"}},
+		BlockedBranch: "stack/feature/auth/02-add-api",
+		BlockedReason: "content conflict",
+		OldOIDs: map[string]string{
+			"stack/feature/auth/01-add-model": "old-model",
+			"stack/feature/auth/02-add-api":   "old-api",
+		},
+	}
+	mockGit.OnAtomicPushStackRefs = func(remote string, updates []git.RefUpdate) {
+		mockGit.RemoteRefOIDs["origin/main"] = "base-new"
+	}
+
+	if err := runRebase(nil, nil); err != nil {
+		t.Fatalf("published prefix was reported as a total failure: %v", err)
+	}
+	if len(mockGit.AtomicUpdates) != 1 {
+		t.Fatalf("expected one safely published ref, got %#v", mockGit.AtomicUpdates)
 	}
 }
 
@@ -274,6 +344,46 @@ func TestRunRebaseRejectsPullRequestTopologyRace(t *testing.T) {
 	}
 	if mockGit.WasCalled("AtomicPushStackRefs") {
 		t.Fatal("published refs after PR topology changed")
+	}
+}
+
+func TestRunRebaseRetriesVisibleBaseMovementBeforePublishing(t *testing.T) {
+	mockGit, _ := setupRebaseCommandTest(t)
+	mockGit.OnPrepareStackRebase = func(baseRef string, branches []string) {
+		mockGit.RemoteRefOIDs["origin/main"] = "base-new"
+	}
+
+	err := runRebase(nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "kept moving") {
+		t.Fatalf("expected bounded base-race retry, got %v", err)
+	}
+	if mockGit.WasCalled("AtomicPushStackRefs") {
+		t.Fatal("published refs after observing the base move")
+	}
+}
+
+func TestRunRebaseRejectsBlockedRefRaceBeforePublishingPrefix(t *testing.T) {
+	mockGit, _ := setupRebaseCommandTest(t)
+	mockGit.RebaseResult = &git.StackRebaseResult{
+		BaseOID:       "base-old",
+		Commits:       []git.Commit{{Hash: "new-model", Subject: "Add model"}},
+		BlockedBranch: "stack/feature/auth/02-add-api",
+		BlockedReason: "content conflict",
+		OldOIDs: map[string]string{
+			"stack/feature/auth/01-add-model": "old-model",
+			"stack/feature/auth/02-add-api":   "old-api",
+		},
+	}
+	mockGit.OnPrepareStackRebase = func(baseRef string, branches []string) {
+		mockGit.RemoteRefOIDs["origin/stack/feature/auth/02-add-api"] = "raced-api"
+	}
+
+	err := runRebase(nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "stack ref") || !strings.Contains(err.Error(), "changed") {
+		t.Fatalf("expected blocked-ref race rejection, got %v", err)
+	}
+	if mockGit.WasCalled("AtomicPushStackRefs") {
+		t.Fatal("published prefix after a blocked ref changed")
 	}
 }
 

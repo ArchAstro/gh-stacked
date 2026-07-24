@@ -10,9 +10,11 @@ import (
 )
 
 type StackRebaseResult struct {
-	Commits []Commit
-	OldOIDs map[string]string
-	BaseOID string
+	Commits       []Commit
+	OldOIDs       map[string]string
+	BaseOID       string
+	BlockedBranch string
+	BlockedReason string
 }
 
 type RefUpdate struct {
@@ -109,8 +111,7 @@ func (g *Git) PrepareStackRebase(baseRef string, branches []string) (*StackRebas
 	defer os.RemoveAll(parentDir)
 
 	worktreeDir := filepath.Join(parentDir, "worktree")
-	tipRef := "origin/" + branches[len(branches)-1]
-	if _, err := g.run("worktree", "add", "--detach", worktreeDir, tipRef); err != nil {
+	if _, err := g.run("worktree", "add", "--detach", worktreeDir, baseRef); err != nil {
 		return nil, fmt.Errorf("create temporary worktree: %w", err)
 	}
 	defer func() {
@@ -118,12 +119,30 @@ func (g *Git) PrepareStackRebase(baseRef string, branches []string) (*StackRebas
 		_, _ = g.run("worktree", "prune")
 	}()
 
-	if _, err := runGitInDir(worktreeDir,
-		"-c", "user.name=gh-stacked",
-		"-c", "user.email=gh-stacked@users.noreply.github.com",
-		"rebase", "--reapply-cherry-picks", "--empty=keep", baseRef,
-	); err != nil {
-		return nil, fmt.Errorf("stack rebase conflicts with %s: %w", baseRef, err)
+	result := &StackRebaseResult{OldOIDs: oldOIDs, BaseOID: baseOID}
+	for _, branch := range branches {
+		if _, err := runGitInDir(worktreeDir,
+			"-c", "user.name=gh-stacked",
+			"-c", "user.email=gh-stacked@users.noreply.github.com",
+			"cherry-pick", "--allow-empty", "--keep-redundant-commits", oldOIDs[branch],
+		); err != nil {
+			unmerged, inspectErr := runGitInDir(worktreeDir, "diff", "--name-only", "--diff-filter=U")
+			_, _ = runGitInDir(worktreeDir, "cherry-pick", "--abort")
+			if inspectErr != nil {
+				return nil, fmt.Errorf("inspect failed stack commit %s: %w", branch, inspectErr)
+			}
+			if strings.TrimSpace(unmerged) == "" {
+				return nil, fmt.Errorf("replay stack commit %s: %w", branch, err)
+			}
+			commits, readErr := commitsInRange(worktreeDir, baseRef+"..HEAD")
+			if readErr != nil {
+				return nil, fmt.Errorf("read partially rebased commits: %w", readErr)
+			}
+			result.Commits = commits
+			result.BlockedBranch = branch
+			result.BlockedReason = fmt.Sprintf("stack rebase conflicts with %s: %v", baseRef, err)
+			return result, nil
+		}
 	}
 
 	commits, err := commitsInRange(worktreeDir, baseRef+"..HEAD")
@@ -134,7 +153,8 @@ func (g *Git) PrepareStackRebase(baseRef string, branches []string) (*StackRebas
 		return nil, fmt.Errorf("rebased stack has %d commits for %d pull requests", len(commits), len(branches))
 	}
 
-	return &StackRebaseResult{Commits: commits, OldOIDs: oldOIDs, BaseOID: baseOID}, nil
+	result.Commits = commits
+	return result, nil
 }
 
 func (g *Git) AtomicPushStackRefs(remote string, updates []RefUpdate) error {

@@ -170,7 +170,13 @@ func (m *MockGit) AtomicPushStackRefs(remote string, updates []RefUpdate) error 
 	if m.OnAtomicPushStackRefs != nil {
 		m.OnAtomicPushStackRefs(remote, updates)
 	}
-	return m.Errors["AtomicPushStackRefs"]
+	if err := m.Errors["AtomicPushStackRefs"]; err != nil {
+		return err
+	}
+	for _, update := range updates {
+		m.RemoteRefOIDs[remote+"/"+update.Branch] = update.NewOID
+	}
+	return nil
 }
 
 func (m *MockGit) RemoteRefOID(remote string, branch string) (string, error) {

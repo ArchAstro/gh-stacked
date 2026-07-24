@@ -218,7 +218,7 @@ func TestRemoteRefOIDValidatesTarget(t *testing.T) {
 	}
 }
 
-func TestPrepareStackRebaseConflictLeavesCallerWorktreeUntouched(t *testing.T) {
+func TestPrepareStackRebaseReturnsRebasedPrefixAtFirstConflict(t *testing.T) {
 	workDir := filepath.Join(t.TempDir(), "work")
 	remoteDir := filepath.Join(t.TempDir(), "remote.git")
 	runGitTestCommand(t, "", "init", "--bare", remoteDir)
@@ -235,13 +235,21 @@ func TestPrepareStackRebaseConflictLeavesCallerWorktreeUntouched(t *testing.T) {
 	runGitTestCommand(t, workDir, "push", "-u", "origin", "main")
 
 	runGitTestCommand(t, workDir, "checkout", "-b", "feature/conflict")
+	if err := os.WriteFile(filepath.Join(workDir, "safe.txt"), []byte("safe\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGitTestCommand(t, workDir, "add", "safe.txt")
+	runGitTestCommand(t, workDir, "commit", "-m", "Safe prefix")
+	safeBranch := "stack/feature/conflict/01-safe-prefix"
+	runGitTestCommand(t, workDir, "branch", safeBranch)
+
 	if err := os.WriteFile(filepath.Join(workDir, "value.txt"), []byte("feature\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	runGitTestCommand(t, workDir, "commit", "-am", "Feature change")
-	branch := "stack/feature/conflict/01-feature-change"
-	runGitTestCommand(t, workDir, "branch", branch)
-	runGitTestCommand(t, workDir, "push", "origin", branch)
+	blockedBranch := "stack/feature/conflict/02-feature-change"
+	runGitTestCommand(t, workDir, "branch", blockedBranch)
+	runGitTestCommand(t, workDir, "push", "origin", safeBranch, blockedBranch)
 
 	runGitTestCommand(t, workDir, "checkout", "main")
 	if err := os.WriteFile(filepath.Join(workDir, "value.txt"), []byte("main\n"), 0o644); err != nil {
@@ -258,14 +266,40 @@ func TestPrepareStackRebaseConflictLeavesCallerWorktreeUntouched(t *testing.T) {
 	}
 	defer os.Chdir(oldWD)
 
-	_, err := New().PrepareStackRebase("origin/main", []string{branch})
-	if err == nil || !strings.Contains(err.Error(), "conflicts") {
-		t.Fatalf("expected conflict error, got %v", err)
+	result, err := New().PrepareStackRebase("origin/main", []string{safeBranch, blockedBranch})
+	if err != nil {
+		t.Fatalf("expected a partial result, got error %v", err)
+	}
+	if len(result.Commits) != 1 || result.Commits[0].Subject != "Safe prefix" {
+		t.Fatalf("expected one safely rebased commit, got %#v", result.Commits)
+	}
+	if result.BlockedBranch != blockedBranch || !strings.Contains(result.BlockedReason, "conflicts") {
+		t.Fatalf("expected conflict at %s, got branch %q reason %q", blockedBranch, result.BlockedBranch, result.BlockedReason)
 	}
 	if current := runGitTestCommand(t, workDir, "rev-parse", "HEAD"); current != originalHead {
 		t.Fatalf("caller HEAD changed after conflict: %s -> %s", originalHead, current)
 	}
 	if branchName := runGitTestCommand(t, workDir, "branch", "--show-current"); branchName != "main" {
 		t.Fatalf("caller branch changed after conflict: %s", branchName)
+	}
+}
+
+func TestPrepareStackRebaseDoesNotClassifyOperationalFailureAsConflict(t *testing.T) {
+	workDir, branches := setupRemoteStack(t)
+	oldWD, _ := os.Getwd()
+	if err := os.Chdir(workDir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(oldWD)
+
+	// Force commit creation to fail without producing unmerged index entries.
+	// Operational failures must abort the whole preparation, not publish a
+	// misleading "safe prefix."
+	runGitTestCommand(t, workDir, "config", "commit.gpgsign", "true")
+	runGitTestCommand(t, workDir, "config", "user.signingkey", "definitely-not-a-real-test-key")
+
+	result, err := New().PrepareStackRebase("origin/main", branches)
+	if err == nil || !strings.Contains(err.Error(), "replay stack commit") {
+		t.Fatalf("expected operational cherry-pick failure, got result %#v error %v", result, err)
 	}
 }

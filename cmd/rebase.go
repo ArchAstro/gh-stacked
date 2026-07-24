@@ -26,21 +26,27 @@ var (
 )
 
 type RebaseOutput struct {
-	Action   string   `json:"action"`
-	StackID  string   `json:"stack_id"`
-	Base     string   `json:"base_branch"`
-	PRs      []int    `json:"pull_requests"`
-	Branches []string `json:"branches"`
+	Action          string   `json:"action"`
+	StackID         string   `json:"stack_id"`
+	Base            string   `json:"base_branch"`
+	PRs             []int    `json:"pull_requests"`
+	Branches        []string `json:"branches"`
+	BlockedPRs      []int    `json:"blocked_pull_requests,omitempty"`
+	BlockedBranches []string `json:"blocked_branches,omitempty"`
+	BlockedReason   string   `json:"blocked_reason,omitempty"`
+	BaseMoved       bool     `json:"base_moved_during_publication,omitempty"`
 }
 
 var rebaseCmd = &cobra.Command{
 	Use:   "rebase",
-	Short: "Rebase an entire remote PR stack onto its base branch",
-	Long: `Rebase an entire remote PR stack as one guarded operation.
+	Short: "Rebase a remote PR stack onto its base branch",
+	Long: `Rebase a remote PR stack as one guarded operation.
 
 The command discovers the stack containing --pr, validates its pull request
-base chain, rebases the cumulative tip in a temporary worktree, and publishes
-all rewritten stack refs with one atomic force-with-lease push. The caller's
+base chain, rebases each commit in a temporary worktree, and atomically
+publishes the maximal prefix that succeeds. If a commit conflicts, that PR and
+all dependent PR head refs remain unchanged. Their GitHub diffs can still
+change because the successfully rebased predecessor ref moved. The caller's
 current branch and worktree are not changed.`,
 	Example: `  # Rebase the stack containing PR #123
   gh stacked rebase --pr 123
@@ -173,7 +179,13 @@ func writeRebaseOutput(output RebaseOutput) error {
 	if output.Action == "preview" {
 		verb = "Validated"
 	}
+	if output.Action == "partial" || output.Action == "partial_preview" {
+		verb = "Partially rebased"
+	}
 	fmt.Printf("%s stack %s: %d PRs onto %s\n", verb, output.StackID, len(output.PRs), output.Base)
+	if len(output.BlockedPRs) > 0 {
+		fmt.Printf("Stopped at PR #%d; %d PR head refs remain unchanged\n", output.BlockedPRs[0], len(output.BlockedPRs))
+	}
 	return nil
 }
 
@@ -245,8 +257,14 @@ func runRebase(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("preflight stack rebase: %w", err)
 		}
-		if len(result.Commits) != len(plan.Entries) {
+		rebasedCount := len(result.Commits)
+		if result.BlockedBranch == "" && rebasedCount != len(plan.Entries) {
 			return fmt.Errorf("preflight returned %d commits for %d pull requests", len(result.Commits), len(plan.Entries))
+		}
+		if result.BlockedBranch != "" {
+			if rebasedCount >= len(plan.Entries) || plan.Entries[rebasedCount].Branch != result.BlockedBranch {
+				return fmt.Errorf("preflight returned an invalid partial result blocked at %q after %d commits", result.BlockedBranch, rebasedCount)
+			}
 		}
 		if rebaseRejectWorkflowChanges {
 			changesWorkflows, err := rebasedStackChangesWorkflows(g, result.Commits)
@@ -270,19 +288,50 @@ func runRebase(cmd *cobra.Command, args []string) error {
 		if latestBaseRef != baseRef || !sameRemoteRebasePlan(plan, latestPlan) {
 			return fmt.Errorf("pull request stack changed during rebase; retry against the latest topology")
 		}
+		remoteBaseOID, err := g.RemoteRefOID("origin", plan.BaseBranch)
+		if err != nil {
+			return fmt.Errorf("revalidate base branch before publication: %w", err)
+		}
+		if remoteBaseOID != result.BaseOID {
+			if attempt == maxBaseRaceAttempts {
+				return fmt.Errorf("base branch %s kept moving during rebase; retry", plan.BaseBranch)
+			}
+			continue
+		}
+		for _, entry := range plan.Entries {
+			remoteOID, err := g.RemoteRefOID("origin", entry.Branch)
+			if err != nil {
+				return fmt.Errorf("revalidate stack ref %s before publication: %w", entry.Branch, err)
+			}
+			if remoteOID != result.OldOIDs[entry.Branch] {
+				return fmt.Errorf("stack ref %s changed during rebase; retry", entry.Branch)
+			}
+		}
 
-		updates := make([]git.RefUpdate, len(plan.Entries))
+		updates := make([]git.RefUpdate, rebasedCount)
 		output := RebaseOutput{
 			Action:   "rebased",
 			StackID:  plan.StackID,
 			Base:     plan.BaseBranch,
-			PRs:      make([]int, len(plan.Entries)),
-			Branches: branches,
+			PRs:      make([]int, rebasedCount),
+			Branches: branches[:rebasedCount],
+		}
+		if result.BlockedBranch != "" {
+			output.Action = "partial"
+			output.BlockedReason = result.BlockedReason
+			for _, entry := range plan.Entries[rebasedCount:] {
+				output.BlockedPRs = append(output.BlockedPRs, entry.PRNumber)
+				output.BlockedBranches = append(output.BlockedBranches, entry.Branch)
+			}
 		}
 		if rebaseDryRun {
-			output.Action = "preview"
+			if output.Action == "partial" {
+				output.Action = "partial_preview"
+			} else {
+				output.Action = "preview"
+			}
 		}
-		for i, entry := range plan.Entries {
+		for i, entry := range plan.Entries[:rebasedCount] {
 			oldOID := result.OldOIDs[entry.Branch]
 			if oldOID == "" {
 				return fmt.Errorf("preflight did not snapshot remote ref %s", entry.Branch)
@@ -292,6 +341,9 @@ func runRebase(cmd *cobra.Command, args []string) error {
 		}
 
 		if rebaseDryRun {
+			return writeRebaseOutput(output)
+		}
+		if len(updates) == 0 {
 			return writeRebaseOutput(output)
 		}
 
@@ -308,11 +360,15 @@ func runRebase(cmd *cobra.Command, args []string) error {
 		// it omits up-to-date refs from receive-pack. Query the server after
 		// publication and retry the complete coherent stack if the base moved
 		// during that narrow window.
-		remoteBaseOID, err := g.RemoteRefOID("origin", plan.BaseBranch)
+		remoteBaseOID, err = g.RemoteRefOID("origin", plan.BaseBranch)
 		if err != nil {
 			return fmt.Errorf("verify base branch after publication: %w", err)
 		}
 		if remoteBaseOID == result.BaseOID {
+			return writeRebaseOutput(output)
+		}
+		if result.BlockedBranch != "" {
+			output.BaseMoved = true
 			return writeRebaseOutput(output)
 		}
 		if attempt == maxBaseRaceAttempts {

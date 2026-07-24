@@ -1,5 +1,5 @@
 name: Rebase a gh-stacked PR stack
-description: Preflight and atomically rebase every PR ref in a gh-stacked stack
+description: Rebase every safe PR ref in a gh-stacked stack and stop at the first conflict
 
 inputs:
   pr-number:
@@ -27,6 +27,18 @@ outputs:
   base-branch:
     description: The root pull request base branch used for the rebase
     value: ${{ steps.rebase.outputs.base-branch }}
+  action:
+    description: Whether the stack was fully rebased, partially rebased, or only previewed
+    value: ${{ steps.rebase.outputs.action }}
+  rebased-pull-requests:
+    description: JSON array of pull request numbers successfully rebased
+    value: ${{ steps.rebase.outputs.rebased-pull-requests }}
+  blocked-pull-requests:
+    description: JSON array containing the conflicting pull request and dependents whose head refs were not rewritten
+    value: ${{ steps.rebase.outputs.blocked-pull-requests }}
+  base-moved-during-publication:
+    description: Whether the base branch advanced after a partial prefix was published
+    value: ${{ steps.rebase.outputs.base-moved-during-publication }}
 
 runs:
   using: composite
@@ -80,3 +92,7 @@ runs:
         echo "$result"
         echo "stack-id=$(jq -r '.stack_id' <<<"$result")" >> "$GITHUB_OUTPUT"
         echo "base-branch=$(jq -r '.base_branch' <<<"$result")" >> "$GITHUB_OUTPUT"
+        echo "action=$(jq -r '.action' <<<"$result")" >> "$GITHUB_OUTPUT"
+        echo "rebased-pull-requests=$(jq -c '.pull_requests' <<<"$result")" >> "$GITHUB_OUTPUT"
+        echo "blocked-pull-requests=$(jq -c '(.blocked_pull_requests // [])' <<<"$result")" >> "$GITHUB_OUTPUT"
+        echo "base-moved-during-publication=$(jq -r '(.base_moved_during_publication // false)' <<<"$result")" >> "$GITHUB_OUTPUT"

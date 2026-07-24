@@ -40,7 +40,7 @@ jobs:
           fetch-depth: 0
           token: ${{ steps.app-token.outputs.token }}
 
-      - name: Rebase complete stack
+      - name: Rebase stack
         id: rebase
         # Replace this placeholder with the full commit SHA reviewed for your
         # repository. Never give a mutable action ref a write-capable token.
@@ -57,7 +57,22 @@ jobs:
           PR_NUMBER: ${{ github.event.issue.number }}
           STACK_ID: ${{ steps.rebase.outputs.stack-id }}
           BASE_BRANCH: ${{ steps.rebase.outputs.base-branch }}
-        run: gh pr comment "$PR_NUMBER" --body "Rebased stack \`$STACK_ID\` onto the latest \`$BASE_BRANCH\`."
+          REBASE_ACTION: ${{ steps.rebase.outputs.action }}
+          REBASED_PRS: ${{ steps.rebase.outputs.rebased-pull-requests }}
+          BLOCKED_PRS: ${{ steps.rebase.outputs.blocked-pull-requests }}
+          BASE_MOVED: ${{ steps.rebase.outputs.base-moved-during-publication }}
+        run: |
+          if [[ "$REBASE_ACTION" == "partial" ]]; then
+            rebased=$(jq -r 'if length == 0 then "none" else map("#" + tostring) | join(", ") end' <<<"$REBASED_PRS")
+            blocked=$(jq -r '.[0]' <<<"$BLOCKED_PRS")
+            base_note=""
+            if [[ "$BASE_MOVED" == "true" ]]; then
+              base_note=" The base branch advanced again during publication."
+            fi
+            gh pr comment "$PR_NUMBER" --body "Partially rebased stack \`$STACK_ID\` onto \`$BASE_BRANCH\`. Updated: $rebased. Stopped at conflicting PR #$blocked; its head ref and dependent head refs were not rewritten, though their diffs may change because the base moved.$base_note"
+          else
+            gh pr comment "$PR_NUMBER" --body "Rebased stack \`$STACK_ID\` onto the latest \`$BASE_BRANCH\`."
+          fi
 
       - name: Report failure
         if: failure() && steps.rebase.outcome == 'failure'
@@ -65,4 +80,4 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           PR_NUMBER: ${{ github.event.issue.number }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: gh pr comment "$PR_NUMBER" --body "Stack rebase failed. Its atomic ref transaction prevents partial stack updates. [View the run]($RUN_URL)."
+        run: gh pr comment "$PR_NUMBER" --body "Stack rebase did not complete. Check the run before retrying; one or more stack refs may already have been updated. [View the run]($RUN_URL)."

@@ -193,3 +193,115 @@ func TestCommentRequestedRebasePublishesTheCompleteStackOnLatestBase(t *testing.
 		t.Fatalf("caller worktree changed:\n%s", status)
 	}
 }
+
+func TestCommentRequestedRebasePublishesPrefixBeforeConflict(t *testing.T) {
+	workDir := filepath.Join(t.TempDir(), "work")
+	remoteDir := filepath.Join(t.TempDir(), "origin.git")
+
+	// Establish the real repository and remote boundaries with a file that the
+	// blocked PR and main will change incompatibly.
+	runRebaseIntegrationGit(t, "", "init", "--bare", remoteDir)
+	runRebaseIntegrationGit(t, "", "init", workDir)
+	runRebaseIntegrationGit(t, workDir, "config", "user.name", "Stack Author")
+	runRebaseIntegrationGit(t, workDir, "config", "user.email", "stack@example.com")
+	writeRebaseIntegrationFile(t, filepath.Join(workDir, "shared.txt"), "base\n")
+	runRebaseIntegrationGit(t, workDir, "add", "shared.txt")
+	runRebaseIntegrationGit(t, workDir, "commit", "-m", "Initial base")
+	runRebaseIntegrationGit(t, workDir, "branch", "-M", "main")
+	runRebaseIntegrationGit(t, workDir, "remote", "add", "origin", remoteDir)
+	runRebaseIntegrationGit(t, workDir, "push", "-u", "origin", "main")
+
+	// Build a three-PR chain: the root is safe, the middle conflicts, and the
+	// tip depends on that conflict and therefore must remain untouched.
+	runRebaseIntegrationGit(t, workDir, "checkout", "-b", "feature/partial-rebase")
+	writeRebaseIntegrationFile(t, filepath.Join(workDir, "safe.txt"), "safe\n")
+	runRebaseIntegrationGit(t, workDir, "add", "safe.txt")
+	runRebaseIntegrationGit(t, workDir, "commit", "-m", "Add safe root")
+	rootBranch := "stack/feature/partial-rebase/01-add-safe-root"
+	runRebaseIntegrationGit(t, workDir, "branch", rootBranch)
+
+	writeRebaseIntegrationFile(t, filepath.Join(workDir, "shared.txt"), "feature\n")
+	runRebaseIntegrationGit(t, workDir, "commit", "-am", "Change shared value")
+	blockedBranch := "stack/feature/partial-rebase/02-change-shared-value"
+	runRebaseIntegrationGit(t, workDir, "branch", blockedBranch)
+
+	writeRebaseIntegrationFile(t, filepath.Join(workDir, "dependent.txt"), "dependent\n")
+	runRebaseIntegrationGit(t, workDir, "add", "dependent.txt")
+	runRebaseIntegrationGit(t, workDir, "commit", "-m", "Add dependent tip")
+	tipBranch := "stack/feature/partial-rebase/03-add-dependent-tip"
+	runRebaseIntegrationGit(t, workDir, "branch", tipBranch)
+	runRebaseIntegrationGit(t, workDir, "push", "origin", rootBranch, blockedBranch, tipBranch)
+	oldRootOID := runRebaseIntegrationGit(t, workDir, "rev-parse", "origin/"+rootBranch)
+	oldBlockedOID := runRebaseIntegrationGit(t, workDir, "rev-parse", "origin/"+blockedBranch)
+	oldTipOID := runRebaseIntegrationGit(t, workDir, "rev-parse", "origin/"+tipBranch)
+
+	// Advance main through the separate local receive-pack boundary with the
+	// conflicting edit.
+	runRebaseIntegrationGit(t, workDir, "checkout", "main")
+	writeRebaseIntegrationFile(t, filepath.Join(workDir, "shared.txt"), "main\n")
+	runRebaseIntegrationGit(t, workDir, "commit", "-am", "Advance shared value")
+	runRebaseIntegrationGit(t, workDir, "push", "origin", "main")
+	runRebaseIntegrationGit(t, workDir, "fetch", "origin", "--prune")
+
+	// Cross the command boundary with real Git subprocesses. GitHub PR
+	// discovery remains an explicit mock; this proof does not execute Actions,
+	// authorization, or a networked GitHub API.
+	mockGitHub := github.NewMockGitHub()
+	mockGitHub.AddExistingPRWithBase(rootBranch, 101, "Add safe root", "open", false, "main")
+	mockGitHub.AddExistingPRWithBase(blockedBranch, 102, "Change shared value", "open", false, rootBranch)
+	mockGitHub.AddExistingPRWithBase(tipBranch, 103, "Add dependent tip", "open", false, blockedBranch)
+
+	oldGit := rebaseNewGit
+	oldGitHub := rebaseNewGitHub
+	oldPR := rebasePR
+	oldActor := rebaseActor
+	oldDryRun := rebaseDryRun
+	oldRejectWorkflowChanges := rebaseRejectWorkflowChanges
+	oldJSON := jsonOutput
+	oldWorkingDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		rebaseNewGit = oldGit
+		rebaseNewGitHub = oldGitHub
+		rebasePR = oldPR
+		rebaseActor = oldActor
+		rebaseDryRun = oldDryRun
+		rebaseRejectWorkflowChanges = oldRejectWorkflowChanges
+		jsonOutput = oldJSON
+		_ = os.Chdir(oldWorkingDir)
+	})
+	if err := os.Chdir(workDir); err != nil {
+		t.Fatal(err)
+	}
+	rebaseNewGit = func() git.GitOperations { return git.New() }
+	rebaseNewGitHub = func() (github.GitHubOperations, error) { return mockGitHub, nil }
+	rebasePR = 102
+	rebaseActor = ""
+	rebaseDryRun = false
+	rebaseRejectWorkflowChanges = false
+	jsonOutput = false
+
+	if err := runRebase(nil, nil); err != nil {
+		t.Fatalf("partial runRebase failed: %v", err)
+	}
+
+	// Observe the maximal-prefix contract from the separate remote: the safe
+	// root moved onto latest main, while the conflict and its dependent tip did not.
+	runRebaseIntegrationGit(t, workDir, "fetch", "origin", "--prune")
+	mainOID := runRebaseIntegrationGit(t, workDir, "rev-parse", "origin/main")
+	newRootOID := runRebaseIntegrationGit(t, workDir, "rev-parse", "origin/"+rootBranch)
+	if newRootOID == oldRootOID {
+		t.Fatal("safe root ref was not rebased")
+	}
+	if rootParent := runRebaseIntegrationGit(t, workDir, "rev-parse", newRootOID+"^"); rootParent != mainOID {
+		t.Fatalf("safe root is based on %s, want latest main %s", rootParent, mainOID)
+	}
+	if got := runRebaseIntegrationGit(t, workDir, "rev-parse", "origin/"+blockedBranch); got != oldBlockedOID {
+		t.Fatalf("blocked ref moved from %s to %s", oldBlockedOID, got)
+	}
+	if got := runRebaseIntegrationGit(t, workDir, "rev-parse", "origin/"+tipBranch); got != oldTipOID {
+		t.Fatalf("dependent ref moved from %s to %s", oldTipOID, got)
+	}
+}

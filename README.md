@@ -101,26 +101,30 @@ gh stacked merge
 
 ## Rebase A Stack From GitHub
 
-`gh stacked rebase` updates a complete remote stack without changing the
-caller's branch or worktree:
+`gh stacked rebase` updates as much of a remote stack as it safely can without
+changing the caller's branch or worktree:
 
 ```bash
 # Rebase the stack containing PR #123 onto the latest origin/main
 gh stacked rebase --pr 123
 
-# Run the complete topology and conflict preflight without pushing
+# Run the topology and conflict preflight without pushing
 gh stacked rebase --pr 123 --dry-run
 ```
 
-The command validates the open PR base chain, rebases the cumulative stack tip
-inside a temporary worktree, and reconstructs the one-commit-per-PR refs. It
-only publishes after the whole rebase succeeds, using one atomic push with an
-explicit force-with-lease for every old remote OID. A conflict, malformed
-stack, or concurrent stack-ref update leaves all remote stack branches unchanged.
-If the base branch moves during publication, the command detects it from the
-remote and retries the complete stack up to three times. Repeated base movement
-can leave the stack coherently based on the immediately previous base tip; the
-command reports that state as a failure so it can be retried.
+The command validates the open PR base chain and replays each one-commit PR
+inside a temporary worktree. If a commit conflicts, it atomically publishes the
+successfully rebased prefix with an explicit force-with-lease for every old
+remote OID; the conflicting PR and all dependent head refs remain unchanged.
+Their GitHub diffs and mergeability can still change because the predecessor
+base ref moved. A malformed stack, an observed concurrent stack-ref update, or
+conflict in the root PR leaves all remote stack branches unchanged. Immediately
+before publication the command rechecks the base OID and every stack ref OID;
+the rewritten prefix also carries per-ref force-with-lease protection through
+the atomic push. An unchanged suffix ref can still move after that point-in-time
+check, but the command never overwrites it. If the base branch moves while a
+complete stack is published, the command detects it from the remote and retries
+up to three times.
 
 To expose `/stack rebase` on pull requests, copy
 [`examples/rebase-stack-on-comment.yml`](examples/rebase-stack-on-comment.yml)
@@ -171,7 +175,7 @@ authoritative repository write-permission check.
 | `gh stacked amend --pr <num>` | Amend by PR number instead of stack position |
 | `gh stacked merge` | Merge the first open PR and rebase the remaining stack |
 | `gh stacked merge --no-rebase` | Merge the first open PR without rebasing the remaining stack |
-| `gh stacked rebase --pr <number>` | Rebase and atomically update a complete remote stack |
+| `gh stacked rebase --pr <number>` | Rebase and atomically update the maximal safe stack prefix |
 | `gh stacked rebase --pr <number> --dry-run` | Preflight a remote stack rebase without pushing |
 | `gh stacked merge-all` | Squash and merge the entire stack as one PR |
 | `gh stacked cleanup` | Remove dangling commits and orphaned stack branches |
