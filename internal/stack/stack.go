@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/calvin/gh-stacked/internal/git"
+	"github.com/ArchAstro/gh-stacked/internal/git"
 )
 
 var nonAlphaNum = regexp.MustCompile(`[^a-z0-9]+`)

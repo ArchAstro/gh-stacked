@@ -7,9 +7,9 @@ import (
 	"os"
 	"strings"
 
-	"github.com/calvin/gh-stacked/internal/git"
-	"github.com/calvin/gh-stacked/internal/github"
-	"github.com/calvin/gh-stacked/internal/stack"
+	"github.com/ArchAstro/gh-stacked/internal/git"
+	"github.com/ArchAstro/gh-stacked/internal/github"
+	"github.com/ArchAstro/gh-stacked/internal/stack"
 	"github.com/spf13/cobra"
 )
 
@@ -103,9 +103,9 @@ func runHousekeeping(cmd *cobra.Command, args []string) error {
 
 	if jsonOutput {
 		out := struct {
-			StackID string              `json:"stack_id"`
-			Base    string              `json:"base_branch"`
-			Entries []stack.StackEntry  `json:"entries"`
+			StackID string                     `json:"stack_id"`
+			Base    string                     `json:"base_branch"`
+			Entries []stack.StackEntry         `json:"entries"`
 			Summary stack.StackAnalysisSummary `json:"summary"`
 		}{
 			StackID: currentBranch,

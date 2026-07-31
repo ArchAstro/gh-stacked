@@ -4,7 +4,7 @@ package stack
 import (
 	"sort"
 
-	"github.com/calvin/gh-stacked/internal/git"
+	"github.com/ArchAstro/gh-stacked/internal/git"
 )
 
 // StackEntry represents a commit or PR in the stack analysis
@@ -178,13 +178,13 @@ func AnalyzeStack(
 
 // StackAnalysisSummary provides counts for the analysis
 type StackAnalysisSummary struct {
-	TotalCommits   int
-	TotalOpenPRs   int
-	Matched        int
-	LocalOnly      int
-	Dangling       int
-	RemoteOnly     int
-	Orphaned       int
+	TotalCommits int
+	TotalOpenPRs int
+	Matched      int
+	LocalOnly    int
+	Dangling     int
+	RemoteOnly   int
+	Orphaned     int
 }
 
 // SummarizeAnalysis returns counts from the analysis

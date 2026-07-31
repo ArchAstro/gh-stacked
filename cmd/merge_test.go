@@ -4,8 +4,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/calvin/gh-stacked/internal/git"
-	"github.com/calvin/gh-stacked/internal/github"
+	"github.com/ArchAstro/gh-stacked/internal/git"
+	"github.com/ArchAstro/gh-stacked/internal/github"
 )
 
 func TestMergeCommand(t *testing.T) {

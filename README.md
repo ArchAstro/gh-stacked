@@ -2,6 +2,9 @@
 
 A GitHub CLI extension for managing stacked pull requests.
 
+[![CI](https://github.com/ArchAstro/gh-stacked/actions/workflows/ci.yml/badge.svg)](https://github.com/ArchAstro/gh-stacked/actions/workflows/ci.yml)
+[![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 `gh-stacked` turns the commits on your feature branch into a stack of pull requests. Each commit maps to one PR, and each PR targets the previous PR in the stack so reviewers see small, incremental diffs instead of one large branch diff.
 
 ## Motivation
@@ -22,10 +25,23 @@ Stacked PRs are useful when one feature is too large for a single review, but sp
 
 - [GitHub CLI](https://cli.github.com/) (`gh`) installed and authenticated
 - `git`
-- Go 1.23+ if you are building from source
+- Go 1.25+ if you are building from source
 - A repository whose base branch is `main` or `master`
 
-### Install from source
+### Install the extension
+
+```bash
+gh extension install ArchAstro/gh-stacked
+```
+
+GitHub releases contain precompiled binaries with build attestations. To
+upgrade an existing installation:
+
+```bash
+gh extension upgrade stacked
+```
+
+### Build from source
 
 ```bash
 git clone https://github.com/ArchAstro/gh-stacked.git
@@ -202,7 +218,7 @@ make install       # Build and install as gh extension
 make uninstall     # Remove the extension
 make clean         # Remove build artifacts
 make fmt           # Format code
-make lint          # Run linter (requires golangci-lint)
+make lint          # Run static analysis with go vet
 make dev           # Format, test, and build
 make check         # Format, lint, and test
 ```
@@ -217,6 +233,15 @@ internal/
   stack/       # Stack logic (branch naming, PR analysis, housekeeping)
 ```
 
+## Contributing And Security
+
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for the
+development workflow and pull request expectations. Please report suspected
+vulnerabilities privately according to [SECURITY.md](SECURITY.md), not in a
+public issue.
+
+Release notes are maintained in [CHANGELOG.md](CHANGELOG.md).
+
 ## License
 
-MIT
+Licensed under the [MIT License](LICENSE).

@@ -27,7 +27,7 @@ func newRESTContractClient(t *testing.T, handler roundTripFunc) *Client {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &Client{rest: rest, repo: Repository{Owner: "ArchAstro", Name: "firstlanding"}}
+	return &Client{rest: rest, repo: Repository{Owner: "acme", Name: "widgets"}}
 }
 
 func TestNewClient(t *testing.T) {
@@ -75,7 +75,7 @@ func TestPullRequestStatus(t *testing.T) {
 
 func TestGetPullRequestDecodesHeadRepository(t *testing.T) {
 	client := newRESTContractClient(t, func(request *http.Request) (*http.Response, error) {
-		if request.URL.Path != "/repos/ArchAstro/firstlanding/pulls/42" {
+		if request.URL.Path != "/repos/acme/widgets/pulls/42" {
 			t.Fatalf("unexpected API path: %s", request.URL.Path)
 		}
 		return &http.Response{
@@ -84,7 +84,7 @@ func TestGetPullRequestDecodesHeadRepository(t *testing.T) {
 			Body: io.NopCloser(strings.NewReader(`{
 				"number": 42,
 				"state": "open",
-				"head": {"ref": "stack/feature/x/01-one", "repo": {"full_name": "ArchAstro/firstlanding"}},
+				"head": {"ref": "stack/feature/x/01-one", "repo": {"full_name": "acme/widgets"}},
 				"base": {"ref": "main"}
 			}`)),
 		}, nil
@@ -94,7 +94,7 @@ func TestGetPullRequestDecodesHeadRepository(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pullRequest.HeadRepository != "ArchAstro/firstlanding" {
+	if pullRequest.HeadRepository != "acme/widgets" {
 		t.Fatalf("head repository = %q", pullRequest.HeadRepository)
 	}
 }
@@ -102,8 +102,8 @@ func TestGetPullRequestDecodesHeadRepository(t *testing.T) {
 func TestListPullRequestsURLQueryPreservesLegalRefCharacters(t *testing.T) {
 	const branch = "stack/feature/a&b%25/01-one"
 	client := newRESTContractClient(t, func(request *http.Request) (*http.Response, error) {
-		if got := request.URL.Query().Get("head"); got != "ArchAstro:"+branch {
-			t.Fatalf("head query = %q, want %q", got, "ArchAstro:"+branch)
+		if got := request.URL.Query().Get("head"); got != "acme:"+branch {
+			t.Fatalf("head query = %q, want %q", got, "acme:"+branch)
 		}
 		if got := request.URL.Query().Get("state"); got != "open" {
 			t.Fatalf("state query = %q", got)
@@ -122,7 +122,7 @@ func TestListPullRequestsURLQueryPreservesLegalRefCharacters(t *testing.T) {
 
 func TestGetRepositoryPermissionUsesCollaboratorPermissionEndpoint(t *testing.T) {
 	client := newRESTContractClient(t, func(request *http.Request) (*http.Response, error) {
-		if request.URL.Path != "/repos/ArchAstro/firstlanding/collaborators/calvin-archastro/permission" {
+		if request.URL.Path != "/repos/acme/widgets/collaborators/octocat/permission" {
 			t.Fatalf("unexpected API path: %s", request.URL.Path)
 		}
 		return &http.Response{
@@ -132,7 +132,7 @@ func TestGetRepositoryPermissionUsesCollaboratorPermissionEndpoint(t *testing.T)
 		}, nil
 	})
 
-	permission, err := client.GetRepositoryPermission("calvin-archastro")
+	permission, err := client.GetRepositoryPermission("octocat")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,15 +151,15 @@ func TestParseGitRemoteURL(t *testing.T) {
 	}{
 		{
 			name:      "SSH standard",
-			url:       "git@github.com:ArchAstro/firstlanding.git",
-			wantOwner: "ArchAstro",
-			wantRepo:  "firstlanding",
+			url:       "git@github.com:acme/widgets.git",
+			wantOwner: "acme",
+			wantRepo:  "widgets",
 		},
 		{
 			name:      "SSH with alias",
-			url:       "git@github.com-aa:ArchAstro/firstlanding.git",
-			wantOwner: "ArchAstro",
-			wantRepo:  "firstlanding",
+			url:       "git@github.com-work:acme/widgets.git",
+			wantOwner: "acme",
+			wantRepo:  "widgets",
 		},
 		{
 			name:      "SSH without .git suffix",
@@ -175,8 +175,8 @@ func TestParseGitRemoteURL(t *testing.T) {
 		},
 		{
 			name:      "HTTPS standard",
-			url:       "https://github.com/calvin/gh-stacked.git",
-			wantOwner: "calvin",
+			url:       "https://github.com/ArchAstro/gh-stacked.git",
+			wantOwner: "ArchAstro",
 			wantRepo:  "gh-stacked",
 		},
 		{

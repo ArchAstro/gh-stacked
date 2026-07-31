@@ -40,7 +40,7 @@ func NewClient() (*Client, error) {
 	repo, err := repository.Current()
 	if err != nil {
 		// Fallback: parse git remote URL directly
-		// This handles SSH aliases like github.com-aa
+		// This handles SSH aliases like github-work
 		owner, name, parseErr := parseGitRemote()
 		if parseErr != nil {
 			return nil, fmt.Errorf("unable to determine current repository: %w", err)
