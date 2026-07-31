@@ -12,7 +12,7 @@ type SyncStatus struct {
 	NeedsFetch bool
 
 	// BehindBase is true if base branch has commits not in local branch
-	BehindBase bool
+	BehindBase  bool
 	BehindCount int
 
 	// HasMergedCommits is true if local commits are already in base (via squash merge)

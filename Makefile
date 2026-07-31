@@ -3,7 +3,7 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -ldflags "-X main.version=$(VERSION)"
 INSTALL_DIR := $(HOME)/.local/share/gh/extensions/gh-stacked
 
-.PHONY: all build test cover clean install uninstall lint fmt
+.PHONY: all build test test-race cover clean install uninstall lint fmt fmt-check vet check
 
 all: build
 
@@ -12,6 +12,9 @@ build:
 
 test:
 	go test ./...
+
+test-race:
+	go test -race ./...
 
 test-verbose:
 	go test ./... -v
@@ -36,13 +39,19 @@ uninstall:
 	rm -rf $(INSTALL_DIR)
 
 lint:
-	golangci-lint run
+	go vet ./...
 
 fmt:
 	go fmt ./...
+
+fmt-check:
+	@test -z "$$(gofmt -l .)" || (echo "Run 'make fmt' to format these files:"; gofmt -l .; exit 1)
+
+vet:
+	go vet ./...
 
 # Development helpers
 dev: fmt test build
 
 # Run a quick check before committing
-check: fmt lint test
+check: fmt-check lint test-race

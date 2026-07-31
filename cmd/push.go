@@ -9,9 +9,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/calvin/gh-stacked/internal/git"
-	"github.com/calvin/gh-stacked/internal/github"
-	"github.com/calvin/gh-stacked/internal/stack"
+	"github.com/ArchAstro/gh-stacked/internal/git"
+	"github.com/ArchAstro/gh-stacked/internal/github"
+	"github.com/ArchAstro/gh-stacked/internal/stack"
 	"github.com/spf13/cobra"
 )
 
@@ -63,12 +63,12 @@ var (
 )
 
 type PushOutput struct {
-	Action          string `json:"action"`
-	StackID         string `json:"stack_id"`
-	PRsCreated      []int  `json:"prs_created"`
-	PRsUpdated      []int  `json:"prs_updated"`
-	PRsRetargeted   []int  `json:"prs_retargeted"`
-	PRsMarkedReady  []int  `json:"prs_marked_ready"`
+	Action         string `json:"action"`
+	StackID        string `json:"stack_id"`
+	PRsCreated     []int  `json:"prs_created"`
+	PRsUpdated     []int  `json:"prs_updated"`
+	PRsRetargeted  []int  `json:"prs_retargeted"`
+	PRsMarkedReady []int  `json:"prs_marked_ready"`
 }
 
 var pushCmd = &cobra.Command{

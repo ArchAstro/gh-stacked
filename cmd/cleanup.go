@@ -7,9 +7,9 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/calvin/gh-stacked/internal/git"
-	"github.com/calvin/gh-stacked/internal/github"
-	"github.com/calvin/gh-stacked/internal/stack"
+	"github.com/ArchAstro/gh-stacked/internal/git"
+	"github.com/ArchAstro/gh-stacked/internal/github"
+	"github.com/ArchAstro/gh-stacked/internal/stack"
 	"github.com/spf13/cobra"
 )
 

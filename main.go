@@ -1,6 +1,6 @@
 package main
 
-import "github.com/calvin/gh-stacked/cmd"
+import "github.com/ArchAstro/gh-stacked/cmd"
 
 var version = "dev"
 

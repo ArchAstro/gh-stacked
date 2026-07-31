@@ -1,2 +1,6 @@
 /gh-stacked
 /gh-stacked.exe
+/coverage.out
+/coverage.html
+/dist/
+.DS_Store

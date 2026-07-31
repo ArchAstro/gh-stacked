@@ -92,9 +92,9 @@ branch: feature/auth
 stack:  stack/feature/auth/01-add-user-model
         stack/feature/auth/02-add-user-api
 
-branch: feature/calvin-2026-01-01-something
-stack:  stack/feature/calvin-2026-01-01-something/01-add-model
-        stack/feature/calvin-2026-01-01-something/02-add-api
+branch: feature/issue-123-something
+stack:  stack/feature/issue-123-something/01-add-model
+        stack/feature/issue-123-something/02-add-api
 ```
 
 Slug: First 4-5 words of commit message, slugified.

@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/calvin/gh-stacked/internal/git"
-	"github.com/calvin/gh-stacked/internal/github"
+	"github.com/ArchAstro/gh-stacked/internal/git"
+	"github.com/ArchAstro/gh-stacked/internal/github"
 )
 
 func TestParseSquashRange(t *testing.T) {
@@ -19,10 +19,10 @@ func TestParseSquashRange(t *testing.T) {
 	}{
 		{"2-4", 2, 4, false},
 		{"1-10", 1, 10, false},
-		{"5-3", 0, 0, true},  // start >= end
-		{"abc", 0, 0, true},  // invalid format
-		{"2-", 0, 0, true},   // missing end
-		{"-4", 0, 0, true},   // missing start
+		{"5-3", 0, 0, true}, // start >= end
+		{"abc", 0, 0, true}, // invalid format
+		{"2-", 0, 0, true},  // missing end
+		{"-4", 0, 0, true},  // missing start
 	}
 
 	for _, tt := range tests {
@@ -489,9 +489,9 @@ func TestRunPush_PreservesPositionsAfterMerge(t *testing.T) {
 	mockGit.BaseBranch = "main"
 	// After merging PR 1, we have 3 remaining commits (originally positions 2, 3, 4)
 	mockGit.Commits = []git.Commit{
-		{Hash: "def5678", Subject: "Add user API"},      // was position 2
-		{Hash: "ghi9012", Subject: "Add user tests"},    // was position 3
-		{Hash: "jkl3456", Subject: "Add user docs"},     // was position 4
+		{Hash: "def5678", Subject: "Add user API"},   // was position 2
+		{Hash: "ghi9012", Subject: "Add user tests"}, // was position 3
+		{Hash: "jkl3456", Subject: "Add user docs"},  // was position 4
 	}
 	// Remote branches exist at their ORIGINAL positions (02, 03, 04)
 	mockGit.RemoteBranches = []string{
@@ -549,9 +549,9 @@ func TestRunPush_NewCommitGetsNextPosition(t *testing.T) {
 	mockGit.BaseBranch = "main"
 	// 2 existing commits + 1 new commit
 	mockGit.Commits = []git.Commit{
-		{Hash: "abc1234", Subject: "Add user model"},    // existing at position 1
-		{Hash: "def5678", Subject: "Add user API"},      // existing at position 2
-		{Hash: "ghi9012", Subject: "Add user tests"},    // NEW commit - should get position 3
+		{Hash: "abc1234", Subject: "Add user model"}, // existing at position 1
+		{Hash: "def5678", Subject: "Add user API"},   // existing at position 2
+		{Hash: "ghi9012", Subject: "Add user tests"}, // NEW commit - should get position 3
 	}
 	// Only first 2 commits have existing remote branches
 	mockGit.RemoteBranches = []string{
@@ -598,8 +598,8 @@ func TestRunPush_SlugCollision(t *testing.T) {
 	mockGit.BaseBranch = "main"
 	// Two commits with similar first 5 words (same slug)
 	mockGit.Commits = []git.Commit{
-		{Hash: "abc1234", Subject: "Add user properties table"},      // slug: add-user-properties-table
-		{Hash: "def5678", Subject: "Add user properties endpoints"},  // slug: add-user-properties-endpoints (different!)
+		{Hash: "abc1234", Subject: "Add user properties table"},     // slug: add-user-properties-table
+		{Hash: "def5678", Subject: "Add user properties endpoints"}, // slug: add-user-properties-endpoints (different!)
 	}
 	// No existing branches
 
@@ -641,15 +641,15 @@ func TestRunPush_SlugCollisionWithExisting(t *testing.T) {
 	mockGit.BaseBranch = "main"
 	// Two commits with SAME slug (first 5 words identical, slug matches branch)
 	mockGit.Commits = []git.Commit{
-		{Hash: "abc1234", Subject: "feat add user model"},     // slug: feat-add-user-model
-		{Hash: "def5678", Subject: "feat add user model"},     // slug: feat-add-user-model (SAME!)
-		{Hash: "ghi9012", Subject: "feat add user API here"},  // slug: feat-add-user-api-here
+		{Hash: "abc1234", Subject: "feat add user model"},    // slug: feat-add-user-model
+		{Hash: "def5678", Subject: "feat add user model"},    // slug: feat-add-user-model (SAME!)
+		{Hash: "ghi9012", Subject: "feat add user API here"}, // slug: feat-add-user-api-here
 	}
 	// Existing branches - two have the SAME slug
 	mockGit.RemoteBranches = []string{
-		"stack/feature/auth/01-feat-add-user-model",     // slug: feat-add-user-model
-		"stack/feature/auth/02-feat-add-user-model",     // slug: feat-add-user-model (SAME!)
-		"stack/feature/auth/03-feat-add-user-api-here",  // slug: feat-add-user-api-here
+		"stack/feature/auth/01-feat-add-user-model",    // slug: feat-add-user-model
+		"stack/feature/auth/02-feat-add-user-model",    // slug: feat-add-user-model (SAME!)
+		"stack/feature/auth/03-feat-add-user-api-here", // slug: feat-add-user-api-here
 	}
 
 	mockGH := github.NewMockGitHub()
@@ -741,9 +741,9 @@ func TestRunPush_NeverCreatesAtExistingPosition(t *testing.T) {
 	// 3 commits, but only 2 have existing branches (at positions 02 and 03)
 	// This simulates the state after merging PR 1
 	mockGit.Commits = []git.Commit{
-		{Hash: "def5678", Subject: "Add user API"},           // existing at position 02
-		{Hash: "ghi9012", Subject: "Add user tests"},         // existing at position 03
-		{Hash: "jkl3456", Subject: "Add new feature"},        // NEW - must NOT get position 01, 02, or 03
+		{Hash: "def5678", Subject: "Add user API"},    // existing at position 02
+		{Hash: "ghi9012", Subject: "Add user tests"},  // existing at position 03
+		{Hash: "jkl3456", Subject: "Add new feature"}, // NEW - must NOT get position 01, 02, or 03
 	}
 	// Existing branches at positions 02 and 03 (position 01 was merged and deleted)
 	mockGit.RemoteBranches = []string{
@@ -813,9 +813,9 @@ func TestRunPush_MissingPRInMiddle(t *testing.T) {
 	mockGit.CurrentBranch = "feature/analytics"
 	mockGit.BaseBranch = "main"
 	mockGit.Commits = []git.Commit{
-		{Hash: "aaa1111", Subject: "Add analytics base"},        // has PR at position 20
-		{Hash: "bbb2222", Subject: "Add visitor properties"},    // NO PR - should get position 21
-		{Hash: "ccc3333", Subject: "Fix analytics error"},       // has PR at position 22
+		{Hash: "aaa1111", Subject: "Add analytics base"},     // has PR at position 20
+		{Hash: "bbb2222", Subject: "Add visitor properties"}, // NO PR - should get position 21
+		{Hash: "ccc3333", Subject: "Fix analytics error"},    // has PR at position 22
 	}
 	mockGit.RemoteBranches = []string{
 		"stack/feature/analytics/20-add-analytics-base",
@@ -899,9 +899,9 @@ func TestRunPush_MissingPRInMiddle_NoHoleAvailable(t *testing.T) {
 	mockGit.CurrentBranch = "feature/auth"
 	mockGit.BaseBranch = "main"
 	mockGit.Commits = []git.Commit{
-		{Hash: "aaa1111", Subject: "First commit"},     // has PR at position 1
-		{Hash: "bbb2222", Subject: "New commit"},       // NO PR - needs position between 1 and 2
-		{Hash: "ccc3333", Subject: "Third commit"},     // has PR at position 2
+		{Hash: "aaa1111", Subject: "First commit"}, // has PR at position 1
+		{Hash: "bbb2222", Subject: "New commit"},   // NO PR - needs position between 1 and 2
+		{Hash: "ccc3333", Subject: "Third commit"}, // has PR at position 2
 	}
 	mockGit.RemoteBranches = []string{
 		"stack/feature/auth/01-first-commit",
@@ -939,8 +939,8 @@ func TestRunPush_NewCommitAtStart(t *testing.T) {
 	mockGit.CurrentBranch = "feature/auth"
 	mockGit.BaseBranch = "main"
 	mockGit.Commits = []git.Commit{
-		{Hash: "aaa1111", Subject: "New first commit"},  // NO PR - should get position 1
-		{Hash: "bbb2222", Subject: "Old first commit"},  // has PR at position 5
+		{Hash: "aaa1111", Subject: "New first commit"}, // NO PR - should get position 1
+		{Hash: "bbb2222", Subject: "Old first commit"}, // has PR at position 5
 	}
 	mockGit.RemoteBranches = []string{
 		"stack/feature/auth/05-old-first-commit",
@@ -1009,10 +1009,10 @@ func TestRunPush_MultipleNewCommitsInSequence(t *testing.T) {
 	mockGit.CurrentBranch = "feature/auth"
 	mockGit.BaseBranch = "main"
 	mockGit.Commits = []git.Commit{
-		{Hash: "aaa1111", Subject: "Existing commit"},    // has PR at position 10
-		{Hash: "bbb2222", Subject: "New commit one"},     // NO PR - should get position 11
-		{Hash: "ccc3333", Subject: "New commit two"},     // NO PR - should get position 12
-		{Hash: "ddd4444", Subject: "Another existing"},   // has PR at position 20
+		{Hash: "aaa1111", Subject: "Existing commit"},  // has PR at position 10
+		{Hash: "bbb2222", Subject: "New commit one"},   // NO PR - should get position 11
+		{Hash: "ccc3333", Subject: "New commit two"},   // NO PR - should get position 12
+		{Hash: "ddd4444", Subject: "Another existing"}, // has PR at position 20
 	}
 	mockGit.RemoteBranches = []string{
 		"stack/feature/auth/10-existing-commit",

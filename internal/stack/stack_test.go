@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/calvin/gh-stacked/internal/git"
+	"github.com/ArchAstro/gh-stacked/internal/git"
 )
 
 func TestSlugify(t *testing.T) {
