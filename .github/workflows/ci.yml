@@ -17,6 +17,9 @@ jobs:
     name: Test (Go ${{ matrix.go-version }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      # go.mod's toolchain line is 1.26.x; keep the 1.25.x leg on Go 1.25.
+      GOTOOLCHAIN: local
     strategy:
       fail-fast: false
       matrix:
